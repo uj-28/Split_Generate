@@ -3,11 +3,14 @@
 # ✂️ Split Generate
 ### From a raw TradingView export to a boardroom-ready Long + Short backtest report — in minutes, not hours.
 
+[![Live App](https://img.shields.io/badge/🚀%20Live%20App-open%20in%20Streamlit-FF4B4B)](https://split-generate.streamlit.app/)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-1F4E79?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Built%20with-Streamlit-FF4B4B?logo=streamlit&logoColor=white)
 ![Plotly](https://img.shields.io/badge/Charts-Plotly-3F4F75?logo=plotly&logoColor=white)
 ![Tests](https://img.shields.io/badge/tests-9%20passing-1E7B45)
 ![Data](https://img.shields.io/badge/your%20data-never%20committed-16324F)
+
+### 👉 **[Try the live app: split-generate.streamlit.app](https://split-generate.streamlit.app/)**
 
 </div>
 
@@ -122,6 +125,8 @@ The Instructions page inside the app has the complete list.
 ---
 
 ## ☁️ Deploy on Streamlit Community Cloud
+
+Live deployment: **<https://split-generate.streamlit.app/>**
 
 1. Push this repo to GitHub
 2. On [share.streamlit.io](https://share.streamlit.io) choose **Create app**

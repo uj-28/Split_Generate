@@ -11,8 +11,7 @@ sys.path.insert(0, str(ROOT))
 import core  # noqa: E402
 import report as R  # noqa: E402
 
-st.set_page_config(page_title="Stages 2-3 · Backtest Report", layout="wide", page_icon="📊")
-
+st.set_page_config(page_title="Stages 2-3 · Backtest Report", layout="wide", page_icon=":material/monitoring:")
 EXAMPLES = {"Long": ROOT.parent / "Algo Test Long.csv", "Short": ROOT.parent / "Algo test  Short.csv"}
 COLORS = {"Long": R.LONG, "Short": R.SHORT, "Combined": R.COMB}
 
@@ -149,9 +148,9 @@ st.html(R.wrap(
 
 rej_all = pd.concat(rejected, ignore_index=True) if rejected else pd.DataFrame()
 if len(rej_all):
-    with st.expander(f"⚠️ {len(rej_all)} rejected rows (not in any figure) - view / download"):
+    with st.expander(f"{len(rej_all)} rejected rows (not in any figure) - view / download"):
         st.dataframe(rej_all, hide_index=True)
-        st.download_button("⬇️ Validation report (CSV)", core.to_csv(rej_all), "rejected trades.csv", "text/csv")
+        st.download_button("Validation report (CSV)", core.to_csv(rej_all), "rejected trades.csv", "text/csv")
 if len(frames) == 2:
     both = set(frames["Long"]["Entry DateTime"]) & set(frames["Short"]["Entry DateTime"])
     if both:
@@ -313,13 +312,13 @@ for tab, name, s in zip(st.tabs(tabs), tabs, subsets):
                      column_config={"Entry DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm"),
                                     "Exit DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm")})
         x1, x2 = st.columns([1, 6])
-        x1.download_button("⬇️ Excel", core.to_xlsx(s), f"{name} trades.xlsx", key=f"x{name}")
+        x1.download_button("Excel", core.to_xlsx(s), f"{name} trades.xlsx", key=f"x{name}")
         x2.download_button("CSV", core.to_csv(s), f"{name} trades.csv", "text/csv", key=f"c{name}")
 
 mat_c, yearly_c = core.monthly_matrix(v)
 summary_df = pd.DataFrame({n: pd.Series({k: (str(x) if k in ("DD From", "DD To") and x is not None else x)
                                          for k, x in M[n].items()}) for n in names}).reset_index(names="Metric")
-sb.download_button("⬇️ Full report data (Excel)", core.to_xlsx_sheets({
+sb.download_button("Full report data (Excel)", core.to_xlsx_sheets({
     "Summary": summary_df, "Yearly": yearly_c, "Monthly": mat_c.reset_index(),
     "Rolling": core.rolling_returns(v, tuple(roll_m)), "Trades": v[cols]}), "backtest report data.xlsx", type="primary")
 

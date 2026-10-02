@@ -174,7 +174,8 @@ def wrap(inner, extra=""):
 
 
 def h2(n, title):
-    return f'<h2><span class="n">{n}</span>{html.escape(title)}</h2><div class="hr"></div>'
+    badge = f'<span class="n">{n}</span>' if n else ""
+    return f'<h2>{badge}{html.escape(title)}</h2><div class="hr"></div>'
 
 
 def kpis(items):

@@ -6,8 +6,7 @@ import streamlit as st
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[1]))
 import report as R  # noqa: E402
 
-st.set_page_config(page_title="Instructions", layout="wide", page_icon="📘")
-
+st.set_page_config(page_title="Instructions", layout="wide", page_icon=":material/menu_book:")
 
 def steps(items):
     return "<ol style='font-size:13px;line-height:1.8;margin:6px 0 10px 18px'>" + "".join(f"<li>{i}</li>" for i in items) + "</ol>"

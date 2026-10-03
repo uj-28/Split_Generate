@@ -29,7 +29,7 @@ sb.caption("Upload the backtest file AlgoTest produced for each signal file (.cs
 files = {d: sb.file_uploader(f"{d} backtest", type=["csv", "xlsx"], key=d) for d in ("Long", "Short")}
 use_ex = sb.checkbox("Use the bundled example files", value=st.query_params.get("demo") == "1", disabled=not all(p.exists() for p in EXAMPLES.values()))
 
-frames, rejected, notes = {}, [], []
+frames, rejected, notes, fnames = {}, [], [], {}
 for d in ("Long", "Short"):
     raw = None
     if files[d]:
@@ -44,6 +44,7 @@ for d in ("Long", "Short"):
         sb.error(f"{d}: {e}")
         continue
     frames[d] = t
+    fnames[d] = raw[1]
     rejected.append(rej.assign(File=d))
     sb.success(f"{d}: {len(t)} trades" + (f" · {len(rej)} rejected" if len(rej) else ""))
     notes += [f"{d}: {w}" for w in warns]
@@ -68,8 +69,9 @@ rng = sb.date_input("Entry date range", (d0, d1), min_value=d0, max_value=d1)
 yr = sb.multiselect("Year", sorted(trades["Entry DateTime"].dt.year.unique()))
 mo = sb.multiselect("Month", list(range(1, 13)), format_func=lambda m: pd.Timestamp(2000, m, 1).strftime("%B"))
 sb.markdown("### Report settings")
-cap = sb.number_input("Capital / margin ₹ (optional)", min_value=0.0, step=100000.0,
-                      help="Only used for ROI % figures. Leave 0 and ROI shows as n/a - nothing is assumed.") or None
+cap = sb.number_input("Capital / margin ₹ (optional)", min_value=0.0, step=100000.0, format="%.0f",
+                      help="Used only for ROI and '% of capital' figures (simple returns: P&L ÷ capital). The same capital is "
+                           "applied to Long, Short and Combined. ₹ P&L never changes with it. Leave 0 = ROI shows n/a.") or None
 mid = d0 + (d1 - d0) / 2
 split = pd.Timestamp(sb.date_input("Regime split date", mid, min_value=d0, max_value=d1))
 roll_m = sb.multiselect("Rolling windows (months)", [1, 2, 3, 6, 12, 24], default=[1, 3, 6, 12])
@@ -91,6 +93,7 @@ for d in ("Long", "Short"):
     if d in frames and (v.Direction == d).any():
         SER[d] = v[v.Direction == d]
 M = {k: core.metrics(s) for k, s in SER.items()}
+CM = {k: core.capital_metrics(m, cap) for k, m in M.items()}
 names = list(SER)
 mc = M["Combined"]
 
@@ -118,7 +121,9 @@ SPECS = [
     ("Longest win / loss streak", lambda m: f'{m["Max Win Streak"]} / {m["Max Loss Streak"]}', ""),
 ]
 if cap:
-    SPECS.insert(1, ("ROI on capital", lambda m: R.num(None if m["Net P&L"] is None else m["Net P&L"] / cap * 100, 2, "%"), "hl"))
+    roi = lambda k: (lambda m: R.num(core.capital_metrics(m, cap)[k], 2, "%"))
+    SPECS[1:1] = [("ROI on capital", roi("ROI %"), "hl"), ("Annualised ROI (simple)", roi("Annualised ROI %"), "hl"),
+                  ("Avg monthly ROI", roi("Avg Monthly ROI %"), "hl"), ("Max drawdown % of capital", roi("Max DD % of Capital"), "bad")]
 
 
 def spec_rows(ms):
@@ -142,6 +147,7 @@ st.html(R.wrap(
     f'<div><b>Horizon:</b> {R.dt(v["Entry DateTime"].min())} – {R.dt(v["Exit DateTime"].max())}</div>'
     f'<div><b>Trades analysed:</b> {len(v):,} of {len(trades):,} loaded</div>'
     f'<div><b>Files:</b> ' + " · ".join(f'{d}: {len(frames[d])} trades' for d in frames) + '</div>'
+    + f'<div><b>Capital / margin:</b> {R.inr(cap) + " (applied to Long, Short and Combined)" if cap else "not entered - ROI shows n/a"}</div>'
     '<div><b>Basis:</b> one trade = one AlgoTest trade row; P&amp;L = file P/L; direction = file it came from</div></div>'
     + "".join(f'<div class="warn">{n}</div>' for n in notes)
     + ("" if len(v) == len(trades) else f'<div class="ok">Filters active - every figure below covers the {len(v):,} filtered trades.</div>')))
@@ -165,11 +171,12 @@ if len(names) == 3:
     summary += (f' Long contributed {R.inr(M["Long"]["Net P&L"])} over {M["Long"]["Total Trades"]} trades and Short '
                 f'{R.inr(M["Short"]["Net P&L"])} over {M["Short"]["Total Trades"]} trades.')
 st.html(R.wrap(R.h2(1, "Executive Summary") + R.kpis([
-    ("Net P&L", R.inr(mc["Net P&L"]), f'{mc["Total Trades"]:,} trades' + (f' · {mc["Net P&L"] / cap * 100:.2f}% of capital' if cap else ""),
+    ("Net P&L", R.inr(mc["Net P&L"]), f'{mc["Total Trades"]:,} trades' + (f' · ROI {CM["Combined"]["ROI %"]:.2f}%' if cap else ""),
      "pos" if mc["Net P&L"] > 0 else "neg" if mc["Net P&L"] < 0 else ""),
     ("Win rate", R.num(mc["Win Rate %"], 2, "%"), f'{mc["Winning Trades"]} wins · {mc["Losing Trades"]} losses · {mc["Breakeven Trades"]} BE', ""),
     ("Profit factor", R.num(mc["Profit Factor"]), "Gross profit ÷ |gross loss|", ""),
-    ("Max drawdown", R.inr(mc["Max Drawdown"]), "Peak-to-trough, closed trades", "neg")]) + f"<p>{summary}</p>"))
+    ("Max drawdown", R.inr(mc["Max Drawdown"]), "Peak-to-trough, closed trades"
+     + (f' · {CM["Combined"]["Max DD % of Capital"]:.2f}% of capital' if cap else ""), "neg")]) + f"<p>{summary}</p>"))
 
 # 2 -------------------------------------------------------------------------------------
 cards = [(n, COLORS[n], [("Net P&L", R.inr(M[n]["Net P&L"])), ("Win rate", R.num(M[n]["Win Rate %"], 1, "%")),
@@ -204,11 +211,13 @@ for n in names:
         m = core.metrics(s)
         reg.append([f'{n}<span class="tag">{tag}</span>', (R.inr(m["Net P&L"]), R.sgn(m["Net P&L"])), str(m["Total Trades"]),
                     R.num(m["Win Rate %"], 2, "%"), R.num(m["Profit Factor"]), R.inr(m["Avg P&L / Trade"]),
-                    (R.inr(m["Max Drawdown"]), "bad"), (R.num(m["Return / MDD"]), "hl")])
+                    (R.inr(m["Max Drawdown"]), "bad"), (R.num(m["Return / MDD"]), "hl")]
+                   + ([(R.num(core.capital_metrics(m, cap)["ROI %"], 2, "%"), "hl")] if cap else []))
 st.html(R.wrap(R.h2(3, f"Regime Analysis - split at {R.dt(split)}")
                + "<p>The horizon is split at the date chosen in the sidebar to check whether the edge persists in the later period. "
                  "A strategy that keeps its numbers after the split is more credible than one whose edge sits entirely before it.</p>"
-               + R.table(["Series / period", "Net P&L", "Trades", "Win rate", "Profit factor", "Avg / trade", "Max DD", "Return / MDD"], reg)))
+               + R.table(["Series / period", "Net P&L", "Trades", "Win rate", "Profit factor", "Avg / trade", "Max DD", "Return / MDD"]
+                         + (["ROI"] if cap else []), reg)))
 
 # 4 -------------------------------------------------------------------------------------
 st.html(R.wrap(R.h2(4, "Strategy Deep-Dive")))
@@ -223,8 +232,9 @@ for tab, n in zip(st.tabs(names), names):
                   (R.inr(r["Max Drawdown"]) + R.pct_of(r["Max Drawdown"], cap), "bad"),
                   (R.num(r["Net P&L"] / cap * 100, 2, "%") if cap else "n/a", "hl")] for _, r in yearly.iterrows()]
         rrows = [[("1 Month" if int(r.Months) == 1 else f"{int(r.Months)} Months" if r.Months < 12 else f"{int(r.Months) // 12} Year" + ("s" if r.Months > 12 else "")),
-                  str(int(r.Windows)), (R.inr(r.Worst), R.sgn(r.Worst)), (R.inr(r.Median), R.sgn(r.Median)),
-                  (R.inr(r.Average), R.sgn(r.Average)), (R.inr(r.Best), "good"),
+                  str(int(r.Windows)), (R.inr(r.Worst) + R.pct_of(r.Worst, cap), R.sgn(r.Worst)),
+                  (R.inr(r.Median) + R.pct_of(r.Median, cap), R.sgn(r.Median)),
+                  (R.inr(r.Average) + R.pct_of(r.Average, cap), R.sgn(r.Average)), (R.inr(r.Best) + R.pct_of(r.Best, cap), "good"),
                   (R.num(r["Positive %"], 1, "%"), "good" if r["Positive %"] == 100 else "hl" if r["Positive %"] >= 90 else "")]
                  for _, r in roll.iterrows()]
         take = ""
@@ -264,9 +274,11 @@ for tab, n in zip(st.tabs(names), names):
 # 5 -------------------------------------------------------------------------------------
 risk = [[n, (R.inr(M[n]["Max Drawdown"]) + R.pct_of(M[n]["Max Drawdown"], cap), "bad"), (R.inr(M[n]["Largest Loss"]), "bad"),
          str(M[n]["Max Loss Streak"]), (R.inr(M[n]["Annualised P&L"]), R.sgn(M[n]["Annualised P&L"])), (R.num(M[n]["Return / MDD"]), "hl")]
+        + ([(R.num(CM[n]["Annualised ROI %"], 2, "%"), "hl")] if cap else [])
         for n in names]
 st.html(R.wrap(R.h2(5, "Risk & Capital Efficiency")
-               + R.table(["Series", "Max drawdown", "Worst trade", "Longest losing run", "Annualised P&L", "Return / MDD"], risk)
+               + R.table(["Series", "Max drawdown", "Worst trade", "Longest losing run", "Annualised P&L", "Return / MDD"]
+                         + (["Annualised ROI"] if cap else []), risk)
                + ('' if cap else '<p class="cap">Enter capital / margin in the sidebar to add % of capital and ROI figures. '
                                  'No capital is assumed.</p>')))
 
@@ -315,12 +327,31 @@ for tab, name, s in zip(st.tabs(tabs), tabs, subsets):
         x1.download_button("Excel", core.to_xlsx(s), f"{name} trades.xlsx", key=f"x{name}")
         x2.download_button("CSV", core.to_csv(s), f"{name} trades.csv", "text/csv", key=f"c{name}")
 
-mat_c, yearly_c = core.monthly_matrix(v)
-summary_df = pd.DataFrame({n: pd.Series({k: (str(x) if k in ("DD From", "DD To") and x is not None else x)
-                                         for k, x in M[n].items()}) for n in names}).reset_index(names="Metric")
-sb.download_button("Full report data (Excel)", core.to_xlsx_sheets({
-    "Summary": summary_df, "Yearly": yearly_c, "Monthly": mat_c.reset_index(),
-    "Rolling": core.rolling_returns(v, tuple(roll_m)), "Trades": v[cols]}), "backtest report data.xlsx", type="primary")
+ledger = v[cols].copy()
+if "Index" in ledger:
+    ledger["Index"] = ledger["Index"].map(lambda x: f"{x:g}" if isinstance(x, float) else str(x))
+info = [
+    ("Horizon", f'{R.dt(v["Entry DateTime"].min())} – {R.dt(v["Exit DateTime"].max())}'),
+    ("Trades analysed", f"{len(v):,} of {len(trades):,} loaded"),
+    ("Files", " · ".join(f"{d}: {fnames[d]} ({len(frames[d])} trades)" for d in frames)),
+    ("Entry date filter", f"{rng[0]:%d %b %Y} – {rng[1]:%d %b %Y}" if len(rng) == 2 else "none"),
+    ("Year filter", ", ".join(map(str, yr)) or "all years"),
+    ("Month filter", ", ".join(pd.Timestamp(2000, m_, 1).strftime("%B") for m_ in mo) or "all months"),
+    ("Capital / margin", f"₹{cap:,.0f} - applied to Long, Short and Combined" if cap else "Not entered - ROI figures not calculated"),
+    ("Regime split date", f"{split:%d %b %Y}"),
+    ("Rolling windows (months)", ", ".join(map(str, roll_m)) or "none"),
+    ("Trade definition", "One AlgoTest trade row; P&L = the file's P/L (including any slippage the backtest applied)"),
+    ("Direction", "The file the trade was uploaded in (Long or Short)"),
+    ("Win rate", "Winning trades ÷ all trades"),
+    ("Profit factor", "Gross profit ÷ |gross loss|; n/a when there is no loss"),
+    ("Max drawdown", "Largest drop of cumulative realised P&L below its running peak (closed trades, ordered by exit time)"),
+    ("ROI", "Simple return: P&L ÷ capital × 100 (annualised ROI = annualised P&L ÷ capital)"),
+    ("Generated", pd.Timestamp.now().strftime("%d %b %Y %H:%M")),
+]
+report_xlsx = core.report_workbook(info, core.report_tables(SER, cap, split, tuple(roll_m), ledger, rej_all if len(rej_all) else None))
+st.download_button("Download full report (Excel)", report_xlsx, "Backtest Report.xlsx", type="primary", key="xfull",
+                   help="Every section of this report as formatted Excel tables, with your filters and capital applied.")
+sb.download_button("Download full report (Excel)", report_xlsx, "Backtest Report.xlsx", type="primary", key="xfull_sb")
 
 # 8 -------------------------------------------------------------------------------------
 st.html(R.wrap(R.h2(8, "Conclusion")

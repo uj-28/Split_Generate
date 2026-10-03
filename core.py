@@ -319,3 +319,220 @@ def to_xlsx_sheets(sheets):
         for name, df in sheets.items():
             df.to_excel(xw, sheet_name=name[:31], index=False)
     return buf.getvalue()
+
+
+# ---------- capital (single formula used by the screen AND the Excel export) ----------
+def capital_metrics(m, cap):
+    """ROI figures from a user-supplied capital/margin. All None when no capital is given.
+    Simple (non-compounded) returns: P&L figure / capital x 100. P&L itself never depends on capital."""
+    ok = bool(cap) and cap > 0 and m["Total Trades"]
+    f = lambda k: (m[k] / cap * 100) if ok and m[k] is not None else None
+    return {"ROI %": f("Net P&L"), "Annualised ROI %": f("Annualised P&L"),
+            "Avg Monthly ROI %": f("Avg Monthly P&L"), "Max DD % of Capital": f("Max Drawdown")}
+
+
+# ---------- formatted Excel report ----------
+MONTHS = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"]
+_SUMMARY = [  # (label, metrics key, format)
+    ("Net P&L", "Net P&L", "money"), ("Total trades", "Total Trades", "int"),
+    ("Winning trades", "Winning Trades", "int"), ("Losing trades", "Losing Trades", "int"),
+    ("Breakeven trades", "Breakeven Trades", "int"), ("Win rate %", "Win Rate %", "pct"),
+    ("Profit factor", "Profit Factor", "num"), ("Gross profit", "Gross Profit", "money"),
+    ("Gross loss", "Gross Loss", "money"), ("Avg P&L per trade", "Avg P&L / Trade", "money"),
+    ("Avg winning trade", "Avg Win", "money"), ("Avg losing trade", "Avg Loss", "money"),
+    ("Largest win", "Largest Win", "money"), ("Largest loss", "Largest Loss", "money"),
+    ("Maximum drawdown", "Max Drawdown", "money"), ("Drawdown from", "DD From", "date"),
+    ("Drawdown to", "DD To", "date"), ("Annualised P&L", "Annualised P&L", "money"),
+    ("Avg monthly P&L", "Avg Monthly P&L", "money"), ("Return / MDD (annualised)", "Return / MDD", "num"),
+    ("Avg trade duration (min)", "Avg Duration (min)", "int"), ("Longest win streak", "Max Win Streak", "int"),
+    ("Longest loss streak", "Max Loss Streak", "int"),
+]
+_CAP = [("ROI on capital %", "ROI %", "pct"), ("Annualised ROI % (simple)", "Annualised ROI %", "pct"),
+        ("Avg monthly ROI %", "Avg Monthly ROI %", "pct"), ("Max drawdown % of capital", "Max DD % of Capital", "pct")]
+_FMT = {
+    **{c: "money" for c in ("Net P&L", "Avg P&L / Trade", "Avg P&L per trade", "Max Drawdown", "Max drawdown", "Worst",
+                            "Median", "Average", "Best", "Worst trade", "Annualised P&L", "Total", "Max DD", "P/L")},
+    **{c: "pct" for c in ("Win Rate %", "Win rate %", "ROI %", "Positive windows %", "Max DD % of capital",
+                          "Annualised ROI %", "Worst % of capital", "Average % of capital", "Best % of capital")},
+    **{c: "int" for c in ("Trades", "Windows", "Holding period (months)", "Longest losing run", "Trade #",
+                          "Duration (min)", "Legs")},
+    **{c: "num" for c in ("Profit Factor", "Profit factor", "Return / MDD", "Vix")},
+    "Entry DateTime": "dt", "Exit DateTime": "dt", "Year": "year",
+}
+
+
+def report_tables(series, cap=None, split=None, roll_months=(1, 3, 6, 12), trades=None, rejected=None):
+    """Every report table as a DataFrame: {sheet name: (df, {column: format}, extras)}.
+    `series` = {"Combined": df, "Long": df, "Short": df}. Formats: money, pct, int, num, date, dt, text."""
+    names = list(series)
+    M = {n: metrics(s) for n, s in series.items()}
+    C = {n: capital_metrics(M[n], cap) for n in names}
+    out = {}
+
+    spec = _SUMMARY[:1] + (_CAP if cap else []) + _SUMMARY[1:]   # all capital rows sit right under Net P&L
+    rows = [[label] + [(C if k in C[n] else M)[n][k] for n in names] for label, k, _ in spec]
+    out["Summary"] = (pd.DataFrame(rows, columns=["Metric"] + names), {},
+                      {"row_formats": [f for _, _, f in spec], "note": "One column per series; each computed from its own trades."})
+
+    yr, roll, risk, reg = [], [], [], []
+    for n in names:
+        s, m = series[n], M[n]
+        mat, y = monthly_matrix(s)
+        if len(y):
+            y = y.copy()
+            if cap:
+                y["ROI %"] = y["Net P&L"] / cap * 100
+            yr.append(y.assign(Series=n))
+            mt = mat.copy()
+            mt.columns = MONTHS
+            yi = y.set_index("Year")
+            mt["Total"], mt["Max DD"] = yi["Net P&L"], yi["Max Drawdown"]
+            if cap:
+                mt["ROI %"] = mt["Total"] / cap * 100
+            mt.index = mt.index.astype(str)
+            allrow = {**mat.sum(min_count=1).set_axis(MONTHS).to_dict(), "Total": m["Net P&L"], "Max DD": m["Max Drawdown"]}
+            if cap:
+                allrow["ROI %"] = C[n]["ROI %"]
+            mt.loc["All years"] = pd.Series(allrow)
+            out[f"Monthly {n}"] = (mt.rename_axis("Year").reset_index(), {**{k: "money" for k in MONTHS}, **_FMT, "Year": "text"},
+                                   {"heat": MONTHS, "note": f"{n}: net P&L by exit month (blank = no trades). "
+                                                            "Max DD is within each year; 'All years' row uses the full period."})
+        r = rolling_returns(s, tuple(roll_months))
+        if len(r):
+            r = r.rename(columns={"Months": "Holding period (months)", "Positive %": "Positive windows %"})
+            if cap:
+                for col in ("Worst", "Average", "Best"):
+                    r[f"{col} % of capital"] = r[col] / cap * 100
+            roll.append(r.assign(Series=n))
+        risk.append({"Series": n, "Max drawdown": m["Max Drawdown"], "Worst trade": m["Largest Loss"],
+                     "Longest losing run": m["Max Loss Streak"], "Annualised P&L": m["Annualised P&L"],
+                     "Return / MDD": m["Return / MDD"],
+                     **({"Max DD % of capital": C[n]["Max DD % of Capital"], "Annualised ROI %": C[n]["Annualised ROI %"]}
+                        if cap else {})})
+        if split is not None:
+            for tag, sub in (("Full period", s), (f"From {pd.Timestamp(split):%d %b %Y}", s[s["Exit DateTime"] >= split])):
+                if sub.empty:
+                    continue
+                mm = metrics(sub)
+                reg.append({"Series": n, "Period": tag, "Net P&L": mm["Net P&L"], "Trades": mm["Total Trades"],
+                            "Win rate %": mm["Win Rate %"], "Profit factor": mm["Profit Factor"],
+                            "Avg P&L per trade": mm["Avg P&L / Trade"], "Max drawdown": mm["Max Drawdown"],
+                            "Return / MDD": mm["Return / MDD"], **({"ROI %": mm["Net P&L"] / cap * 100} if cap else {})})
+
+    lead = lambda df: df[["Series"] + [c for c in df.columns if c != "Series"]]
+    if yr:
+        out["Yearly"] = (lead(pd.concat(yr, ignore_index=True)), _FMT, {"pnl": ["Net P&L"], "note": "Calendar years by exit date."})
+    if reg:
+        out["Regime"] = (pd.DataFrame(reg), _FMT, {"pnl": ["Net P&L"], "note": "Full period vs. the period from the split date."})
+    if roll:
+        out["Rolling"] = (lead(pd.concat(roll, ignore_index=True)), _FMT,
+                          {"pnl": ["Worst", "Median", "Average", "Best"],
+                           "note": "Overlapping calendar windows anchored on every trade; only windows that fit in the data."})
+    out["Risk"] = (pd.DataFrame(risk), _FMT, {"note": "Closed-trade drawdown; Return / MDD = annualised P&L / max drawdown."})
+    if trades is not None and len(trades):
+        out["Trades"] = (trades, {**_FMT, "Index": "text"}, {"pnl": ["P/L"], "note": "Every trade in the report (after filters)."})
+    if rejected is not None and len(rejected):
+        out["Rejected rows"] = (rejected, _FMT, {"note": "Rows excluded from every figure, with the reason."})
+    order = ["Summary", "Yearly"] + [k for k in out if k.startswith("Monthly")] + ["Regime", "Rolling", "Risk", "Trades", "Rejected rows"]
+    return {k: out[k] for k in order if k in out}
+
+
+_XL = {"money": '"₹"#,##0.00;[Red]-"₹"#,##0.00', "pct": '0.00"%";[Red]-0.00"%"', "int": "#,##0", "year": "0",
+       "num": "0.00", "date": "dd-mmm-yyyy", "dt": "dd-mmm-yyyy hh:mm", "text": "@"}
+
+
+def report_workbook(info, tables, title="Long + Short Backtest Report"):
+    """Formatted .xlsx: a 'Report Info' sheet, then one styled Excel Table per report table
+    (navy header, banded rows, sort/filter, number formats, green/red P&L, heatmap on monthly sheets)."""
+    from openpyxl.formatting.rule import CellIsRule, ColorScaleRule
+    from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
+    from openpyxl.utils import get_column_letter
+    from openpyxl.worksheet.table import Table, TableStyleInfo
+
+    line = Side(style="thin", color="D5DAE0")
+    box = Border(top=line, bottom=line, left=line, right=line)
+    head_font, head_fill = Font(bold=True, color="FFFFFF"), PatternFill("solid", fgColor="1F4E79")
+    green, red = Font(color="1E7B45", bold=True), Font(color="B3261E", bold=True)
+
+    def sign_rules(ws, rng):
+        ws.conditional_formatting.add(rng, CellIsRule(operator="greaterThan", formula=["0"], font=green))
+        ws.conditional_formatting.add(rng, CellIsRule(operator="lessThan", formula=["0"], font=red))
+
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf, engine="openpyxl") as xw:
+        pd.DataFrame(info, columns=["Item", "Value"]).to_excel(xw, sheet_name="Report Info", index=False, startrow=3)
+        for name, (df, _, _) in tables.items():
+            df.to_excel(xw, sheet_name=name[:31], index=False, startrow=3)
+        wb = xw.book
+
+        ws = wb["Report Info"]
+        ws["A1"], ws["A2"] = title, "Built from the AlgoTest trade files. ₹ values are as exported; % figures need a capital."
+        ws["A1"].font, ws["A2"].font = Font(bold=True, size=16, color="16324F"), Font(italic=True, color="5A6675")
+        ws.sheet_view.showGridLines = False
+        for c in ws[4]:
+            c.font, c.fill, c.border = head_font, head_fill, box
+        for r in ws.iter_rows(min_row=5):
+            r[0].font, r[0].border, r[1].border = Font(bold=True, color="25313F"), box, box
+            r[1].alignment = Alignment(wrap_text=True, vertical="top")
+        ws.column_dimensions["A"].width, ws.column_dimensions["B"].width = 30, 110
+
+        for i, (name, (df, fmts, extra)) in enumerate(tables.items()):
+            ws = wb[name[:31]]
+            ws["A1"], ws["A2"] = name, extra.get("note", "")
+            ws["A1"].font, ws["A2"].font = Font(bold=True, size=14, color="16324F"), Font(italic=True, color="5A6675")
+            ws.freeze_panes = "B5" if name.startswith(("Summary", "Monthly")) else "A5"
+            ws.sheet_view.showGridLines = False
+            ws.page_setup.orientation, ws.page_setup.fitToWidth, ws.page_setup.fitToHeight = "landscape", 1, 0
+            ws.sheet_properties.pageSetUpPr.fitToPage = True
+            ws.print_title_rows = "4:4"
+            if df.empty:
+                ws["A4"] = "No data for the current filters."
+                continue
+            nr, nc = len(df) + 4, len(df.columns)
+            t = Table(displayName=f"T{i}_" + re.sub(r"\W", "_", name), ref=f"A4:{get_column_letter(nc)}{nr}")
+            t.tableStyleInfo = TableStyleInfo(name="TableStyleMedium2", showRowStripes=True)
+            ws.add_table(t)
+            for c in ws[4]:
+                c.font, c.fill, c.border = head_font, head_fill, box
+                c.alignment = Alignment(horizontal="center", vertical="center", wrap_text=True)
+            ws.row_dimensions[4].height = 32
+            rowf = extra.get("row_formats")
+            for j, col in enumerate(df.columns, 1):
+                L = get_column_letter(j)
+                for r in range(5, nr + 1):
+                    cell = ws[f"{L}{r}"]
+                    cell.border = box
+                    fmt = _XL.get(rowf[r - 5] if rowf and j > 1 else fmts.get(col, ""))
+                    if fmt:
+                        cell.number_format = fmt
+                    if rowf and j > 1 and cell.value is None:
+                        cell.value = "n/a"
+                        cell.alignment = Alignment(horizontal="right")
+                    if j == 1:
+                        cell.font = Font(bold=True, color="25313F")
+                vals = df[col].head(500)
+                w = max([len(str(col)) + 2] + [len(f"{x:,.2f}") + 3 if isinstance(x, float) else len(str(x)) for x in vals])
+                ws.column_dimensions[L].width = min(max(w, 10), 48)
+            for col in extra.get("pnl", []):
+                if col in df.columns:
+                    L = get_column_letter(list(df.columns).index(col) + 1)
+                    sign_rules(ws, f"{L}5:{L}{nr}")
+            heat = [c for c in extra.get("heat", []) if c in df.columns]
+            if heat:
+                a = get_column_letter(list(df.columns).index(heat[0]) + 1)
+                b = get_column_letter(list(df.columns).index(heat[-1]) + 1)
+                ws.conditional_formatting.add(f"{a}5:{b}{nr - 1}", ColorScaleRule(
+                    start_type="min", start_color="F4A6A1", mid_type="num", mid_value=0, mid_color="FFFFFF",
+                    end_type="max", end_color="9FD5B5"))
+                for col in ("Total", "ROI %"):
+                    if col in df.columns:
+                        L = get_column_letter(list(df.columns).index(col) + 1)
+                        sign_rules(ws, f"{L}5:{L}{nr}")
+                for c in ws[nr]:  # 'All years' total row
+                    c.font = Font(bold=True, color="25313F")
+                    c.border = Border(top=Side(style="medium", color="16324F"), bottom=line, left=line, right=line)
+            if rowf:  # Summary: colour P&L-type rows by sign
+                for r, f in enumerate(rowf, 5):
+                    if f in ("money", "pct") and not str(ws[f"A{r}"].value).lower().startswith(("gross loss", "max", "largest loss", "avg losing", "win rate")):
+                        sign_rules(ws, f"B{r}:{get_column_letter(nc)}{r}")
+    return buf.getvalue()

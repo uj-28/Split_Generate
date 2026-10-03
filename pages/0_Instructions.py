@@ -72,10 +72,14 @@ st.html(R.wrap(
     + "<h3>Sidebar controls</h3>"
     + ul([
         "<b>Filters:</b> entry date range, year, month - the whole report (cards, tables, charts) updates together.",
-        "<b>Capital / margin (optional):</b> enables ROI % figures. If left at 0, ROI shows n/a - no capital is assumed.",
+        "<b>Capital / margin (optional):</b> adds ROI and '% of capital' figures everywhere (screen and Excel). ROI is a simple "
+        "return: P&amp;L ÷ capital × 100. The same capital is used for Long, Short and Combined. ₹ P&amp;L never changes with it. "
+        "Left at 0, ROI shows n/a - no capital is assumed.",
         "<b>Regime split date:</b> compares the full period with the period from that date onward.",
         "<b>Rolling windows:</b> choose the holding periods (months) to test.",
-        "<b>Full report data (Excel):</b> summary, yearly, monthly, rolling and trades in one workbook."])
+        "<b>Download full report (Excel):</b> every section as formatted Excel tables - Report Info (files, filters, capital, "
+        "definitions), Summary, Yearly, Monthly heatmap per series, Regime, Rolling, Risk and the full trade ledger. "
+        "Your filters and capital are applied exactly as on screen."])
     + "<h3>Report sections</h3>"
     + R.table(["#", "Section", "What it shows"], [
         ["1", "Executive Summary", "Net P&amp;L, win rate, profit factor, max drawdown + a plain-language summary"],

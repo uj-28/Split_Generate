@@ -157,3 +157,77 @@ def test_tolerant_loader_merged_report_and_case():
                            "Entry Price Spot": [1.0, 2.0], "Exit Price Spot": [2.0, 1.0], "P/L": [3526.25, -783.25]})
     t, rej, _ = core.load_algotest(merged, "Long")
     assert len(t) == 2 and core.metrics(t)["Net P&L"] == pytest.approx(2743.0)
+
+
+# ---------- capital / ROI and the formatted Excel report ----------
+def _series():
+    lt, st_ = load("Algo Test Long.csv", "Long"), load("Algo test  Short.csv", "Short")
+    return {"Combined": core.combine(lt, st_), "Long": lt, "Short": st_}
+
+
+def test_capital_changes_roi_but_never_pnl():
+    m = core.metrics(_series()["Combined"])
+    assert all(v is None for v in core.capital_metrics(m, None).values())
+    assert all(v is None for v in core.capital_metrics(m, 0).values())
+    a, b = core.capital_metrics(m, 500000), core.capital_metrics(m, 1000000)
+    assert a["ROI %"] == pytest.approx(m["Net P&L"] / 500000 * 100)
+    assert a["Annualised ROI %"] == pytest.approx(m["Annualised P&L"] / 500000 * 100)
+    assert a["Avg Monthly ROI %"] == pytest.approx(m["Avg Monthly P&L"] / 500000 * 100)
+    assert a["Max DD % of Capital"] == pytest.approx(m["Max Drawdown"] / 500000 * 100)
+    assert b["ROI %"] == pytest.approx(a["ROI %"] / 2)                      # double capital -> half ROI
+    assert core.metrics(_series()["Combined"])["Net P&L"] == m["Net P&L"]    # P&L untouched
+
+
+def _wb(cap):
+    import io as _io
+    import openpyxl
+    S = _series()
+    trades = S["Combined"]
+    tables = core.report_tables(S, cap, pd.Timestamp("2025-09-26"), (1, 3), trades)
+    return tables, openpyxl.load_workbook(_io.BytesIO(core.report_workbook([("Capital", str(cap))], tables)))
+
+
+def test_excel_report_complete_and_formatted():
+    tables, wb = _wb(500000)
+    for sh in ("Report Info", "Summary", "Yearly", "Monthly Combined", "Monthly Long", "Monthly Short",
+               "Regime", "Rolling", "Risk", "Trades"):
+        assert sh in wb.sheetnames, sh
+    ws = wb["Summary"]
+    hdr = [c.value for c in ws[4]]
+    assert hdr == ["Metric", "Combined", "Long", "Short"]
+    assert ws["A4"].fill.fgColor.rgb.endswith("1F4E79") and ws["A4"].font.b    # navy bold header
+    rows = {ws[f"A{r}"].value: r for r in range(5, ws.max_row + 1)}
+    m = core.metrics(_series()["Combined"])
+    assert ws[f"B{rows['Net P&L']}"].value == pytest.approx(m["Net P&L"])
+    assert ws[f"B{rows['Net P&L']}"].number_format.startswith('"₹"#,##0.00')
+    assert ws[f"B{rows['ROI on capital %']}"].value == pytest.approx(m["Net P&L"] / 500000 * 100)
+    assert ws[f"B{rows['Win rate %']}"].number_format.startswith('0.00"%"')
+    assert len(ws.tables) == 1                                                  # real Excel table (sort / filter)
+    mon = wb["Monthly Combined"]
+    assert [c.value for c in mon[4]][:13] == ["Year"] + core.MONTHS and mon.conditional_formatting
+    assert mon.cell(mon.max_row, 1).value == "All years"
+    tr = wb["Trades"]
+    assert tr.max_row - 4 == 510
+    pl_col = [c.value for c in tr[4]].index("P/L") + 1
+    assert tr.cell(5, pl_col).number_format.startswith('"₹"')
+    dt_col = [c.value for c in tr[4]].index("Entry DateTime") + 1
+    assert tr.cell(5, dt_col).number_format == "dd-mmm-yyyy hh:mm"
+    # monthly sheet total equals net P&L; yearly ROI follows the capital
+    assert sum(r[0] for r in wb["Yearly"].iter_rows(min_row=5, min_col=3, max_col=3, values_only=True)
+               if r[0] is not None) == pytest.approx(m["Net P&L"] + core.metrics(_series()["Long"])["Net P&L"]
+                                                     + core.metrics(_series()["Short"])["Net P&L"])
+
+
+def test_excel_without_capital_has_no_fake_roi():
+    tables, wb = _wb(None)
+    labels = [wb["Summary"][f"A{r}"].value for r in range(5, wb["Summary"].max_row + 1)]
+    assert not any("ROI" in str(x) or "capital" in str(x) for x in labels)
+    assert "ROI %" not in tables["Yearly"][0].columns and "Annualised ROI %" not in tables["Risk"][0].columns
+
+
+def test_excel_sheet_order_and_year_format():
+    _, wb = _wb(500000)
+    assert wb.sheetnames[:3] == ["Report Info", "Summary", "Yearly"] and wb.sheetnames[-1] == "Trades"
+    y = wb["Yearly"]
+    yc = [c.value for c in y[4]].index("Year") + 1
+    assert y.cell(5, yc).number_format == "0"          # 2024, not 2,024

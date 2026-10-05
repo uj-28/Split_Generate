@@ -1,0 +1,36 @@
+# ---- Your data: never commit ----
+*.csv
+*.xlsx
+*.xls
+*.xlsm
+*.pdf
+*.clktrd
+*.json
+*.parquet
+data/
+Long Signals.*
+Short Signals.*
+backtest report data.xlsx
+
+# ---- Python ----
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+venv/
+env/
+*.egg-info/
+
+# ---- Environment / secrets (config.toml is tracked, secrets are not) ----
+.streamlit/secrets.toml
+.env
+*.env
+
+# ---- Logs, editors, OS ----
+*.log
+*.tmp
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+desktop.ini

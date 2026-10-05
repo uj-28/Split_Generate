@@ -1,0 +1,19 @@
+name: tests
+
+# Runs on every push / pull request. A red X on GitHub (and an email) means
+# something broke - fix it before the live app is affected further.
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"     # same as Streamlit Cloud
+          cache: pip
+      - run: pip install -r requirements.txt
+      - run: python -m pytest tests -q -rs

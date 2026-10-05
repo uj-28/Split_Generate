@@ -7,7 +7,7 @@
 ![Python](https://img.shields.io/badge/Python-3.10%2B-1F4E79?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Built%20with-Streamlit-FF4B4B?logo=streamlit&logoColor=white)
 ![Plotly](https://img.shields.io/badge/Charts-Plotly-3F4F75?logo=plotly&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-13%20passing-1E7B45)
+[![tests](https://github.com/uj-28/Split_Generate/actions/workflows/tests.yml/badge.svg)](https://github.com/uj-28/Split_Generate/actions/workflows/tests.yml)
 ![Data](https://img.shields.io/badge/your%20data-never%20committed-16324F)
 
 ### **[Try the live app: splitgenerate.streamlit.app](https://splitgenerate.streamlit.app/)**
@@ -153,9 +153,19 @@ legacy_clktrd_app.py           original .clktrd viewer (not in the menu)
 python -m pytest tests -q
 ```
 
-The tests check the splitter against hand-split example files and recompute every KPI independently.
-They need those example CSVs in the folder **above** the project — they are deliberately **not** in this repo
-(see below), so on a fresh clone the data-driven tests will fail until you add your own files.
+- `tests/test_smoke.py` uses synthetic data, so it runs anywhere. It pushes fake TradingView and AlgoTest files through the
+  whole pipeline (split → import → metrics → Excel report) and checks that every page renders without an error.
+- `tests/test_core.py` checks the splitter and every KPI against your real example files, recalculated independently.
+  Those CSVs are local-only (never committed), so these tests are **skipped** wherever the files aren't present.
+- **GitHub runs the tests on every push** (`.github/workflows/tests.yml`). A red ❌ on the commit, plus an email,
+  means something broke.
+
+## Keeping the live app stable
+
+- `requirements.txt` pins the exact library versions the app is tested with, so a new release can't break it
+  overnight. To upgrade: change a version, run the tests, then push.
+- The live app redeploys automatically on every push to `main`. Never delete files on GitHub directly; if it happens,
+  revert the commit and run **Reboot app** on Streamlit.
 
 ## Your data stays yours
 

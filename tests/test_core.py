@@ -1,4 +1,5 @@
-"""Run: python -m pytest tests -q   (from algotest_trade_visualizer-main). Uses the example CSVs one folder up."""
+"""Run: python -m pytest tests -q. Uses your example CSVs one folder up; they are never committed,
+so on GitHub (CI) these tests are skipped and tests/test_smoke.py covers the app with synthetic data."""
 import csv
 import io
 import pathlib
@@ -12,6 +13,8 @@ import core  # noqa: E402
 
 D = pathlib.Path(__file__).resolve().parents[2]
 rd = lambda n: core.read_table(D / n, n)
+pytestmark = pytest.mark.skipif(not (D / "Long+Short Row file.csv").exists(),
+                                reason="example CSVs are local-only (not in the repo)")
 
 
 # ---------- signal splitter ----------

@@ -27,7 +27,9 @@ sb.markdown("### ② Import AlgoTest results")
 sb.caption("Upload the backtest file AlgoTest produced for each signal file (.csv / .xlsx). "
            "Slippage-adjusted exports are fine - the file's own P/L is used as-is.")
 files = {d: sb.file_uploader(f"{d} backtest", type=["csv", "xlsx"], key=d) for d in ("Long", "Short")}
-use_ex = sb.checkbox("Use the bundled example files", value=st.query_params.get("demo") == "1", disabled=not all(p.exists() for p in EXAMPLES.values()))
+# example files exist only on a local copy (they are never committed), so the option is hidden elsewhere
+use_ex = all(p.exists() for p in EXAMPLES.values()) and sb.checkbox("Use the bundled example files",
+                                                                    value=st.query_params.get("demo") == "1")
 
 frames, rejected, notes, fnames = {}, [], [], {}
 for d in ("Long", "Short"):

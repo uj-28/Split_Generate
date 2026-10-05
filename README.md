@@ -3,14 +3,14 @@
 # Split Generate
 ### From a raw TradingView export to a boardroom-ready Long + Short backtest report — in minutes, not hours.
 
-[![Live App](https://img.shields.io/badge/Live%20App-open%20in%20Streamlit-FF4B4B)](https://split-generate.streamlit.app/)
+[![Live App](https://img.shields.io/badge/Live%20App-open%20in%20Streamlit-FF4B4B)](https://splitgenerate.streamlit.app/)
 ![Python](https://img.shields.io/badge/Python-3.10%2B-1F4E79?logo=python&logoColor=white)
 ![Streamlit](https://img.shields.io/badge/Built%20with-Streamlit-FF4B4B?logo=streamlit&logoColor=white)
 ![Plotly](https://img.shields.io/badge/Charts-Plotly-3F4F75?logo=plotly&logoColor=white)
-![Tests](https://img.shields.io/badge/tests-9%20passing-1E7B45)
+![Tests](https://img.shields.io/badge/tests-13%20passing-1E7B45)
 ![Data](https://img.shields.io/badge/your%20data-never%20committed-16324F)
 
-### **[Try the live app: split-generate.streamlit.app](https://split-generate.streamlit.app/)**
+### **[Try the live app: splitgenerate.streamlit.app](https://splitgenerate.streamlit.app/)**
 
 </div>
 
@@ -127,7 +127,7 @@ The Instructions page inside the app has the complete list.
 ## Two ways to use it
 
 **1. Use the hosted app (no setup)**
-Open **<https://split-generate.streamlit.app/>** in your browser and upload your files. Nothing to install.
+Open **<https://splitgenerate.streamlit.app/>** in your browser and upload your files. Nothing to install.
 
 **2. Run it on your own system**
 Follow the [Quick start](#quick-start) above. Your files then never leave your computer.

@@ -138,7 +138,7 @@ Follow the [Quick start](#quick-start) above. Your files then never leave your c
 app.py                         entry point + navigation
 core.py                        all logic: splitting, AlgoTest import, metrics
 report.py                      HTML/CSS building blocks + shared design
-pages/
+views/                         (not 'pages/' - that name makes Streamlit flash its default menu)
   0_Instructions.py            in-app user guide
   1_Signal_Splitter.py         stage 1
   2_Backtest_Dashboard.py      stages 2-3

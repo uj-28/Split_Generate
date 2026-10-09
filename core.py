@@ -13,11 +13,12 @@ import re
 from dataclasses import dataclass, field
 from datetime import datetime
 
+import openpyxl
 import pandas as pd
 
 SIG_REQUIRED = ["Trade number", "Type", "Date and time", "Price"]
 ALGO_REQUIRED = ["Index", "Entry Date", "Entry Time", "Exit Date", "Exit Time", "P/L"]
-LEG_COLS = ["Type", "Strike", "B/S", "Qty", "Entry Price", "Exit Price"]
+LEG_COLS = ["Type", "Strike", "B/S", "Qty", "Entry Price", "Exit Price", "Expiry"]
 DATE_FMTS = {"DD-MM-YYYY HH:MM": "%d-%m-%Y %H:%M",
              "YYYY-MM-DD HH:MM": "%Y-%m-%d %H:%M"}
 
@@ -128,6 +129,12 @@ def _dates(s):
 _ALIASES = {"index": "Index", "trade #": "Index", "trade no": "Index", "trade number": "Index",
             "trade no.": "Index", "sr no": "Index", "#": "Index", "p/l": "P/L", "pnl": "P/L", "p&l": "P/L",
             "net p/l": "P/L", "profit/loss": "P/L", "b/s": "B/S", "vix": "Vix", "qty": "Qty",
+            # AlgoTest's newer, more detailed export uses different (often hyphenated) headers for the
+            # same fields - alias them onto the same canonical names so load_algotest() needs no changes.
+            "entry-date": "Entry Date", "entry-time": "Entry Time", "exitdate": "Exit Date",
+            "exittime": "Exit Time", "instrument-kind": "Type", "strikeprice": "Strike",
+            "position": "B/S", "quantity": "Qty", "expirydate": "Expiry",
+            "entry-price": "Entry Price", "exitprice": "Exit Price", "exit-price": "Exit Price",
             **{c.lower(): c for c in ALGO_REQUIRED + LEG_COLS}}
 
 
@@ -536,3 +543,149 @@ def report_workbook(info, tables, title="Long + Short Backtest Report"):
                     if f in ("money", "pct") and not str(ws[f"A{r}"].value).lower().startswith(("gross loss", "max", "largest loss", "avg losing", "win rate")):
                         sign_rules(ws, f"B{r}:{get_column_letter(nc)}{r}")
     return buf.getvalue()
+
+
+# ---------- Strategy Hub: merge many AlgoTest / StockMock files into one trade log ----------
+def is_stockmock_workbook(file_bytes):
+    """Quick format sniff on an .xlsx's sheet names, no full parse."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
+        sheets = wb.sheetnames
+        wb.close()
+    except Exception:
+        return False
+    return "Basket Strategies" in sheets
+
+
+def load_stockmock(file_bytes, name):
+    """Return (trades, rejected, warnings). One row per expiry/trade-cycle, read from each
+    enabled (Run=True) strategy's '# S-n - Result' sheet. StockMock gives only the net P/L per
+    cycle (no per-leg strike/price detail) and only an EXIT time (no entry time) - Duration is
+    therefore left blank for these rows rather than guessed."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), data_only=True)
+    except Exception as e:
+        raise ValueError(f"'{name}' could not be read as an Excel workbook ({type(e).__name__}: {e}).") from e
+    if "Basket Strategies" not in wb.sheetnames:
+        raise ValueError(f"'{name}' does not look like a StockMock basket export "
+                         "(no 'Basket Strategies' sheet).")
+
+    bs_rows = list(wb["Basket Strategies"].iter_rows(values_only=True))
+    hdr = next((i for i, r in enumerate(bs_rows) if r and r[0] == "Run"), None)
+    active = {}  # "#S-1" -> strategy name
+    if hdr is not None:
+        for r in bs_rows[hdr + 1:]:
+            if r and r[0] and str(r[0]).strip().lower() == "true" and r[1]:
+                active[str(r[1]).strip()] = str(r[2] or r[1]).strip()
+    if not active:
+        raise ValueError(f"'{name}': no enabled (Run=True) strategy found in 'Basket Strategies'.")
+
+    norm = lambda s: re.sub(r"\s+", "", s).lower()
+    rows, warnings = [], []
+    for sid, nm in active.items():
+        sheet = next((s for s in wb.sheetnames if norm(s) == norm(f"{sid} - Result")), None)
+        if not sheet:
+            warnings.append(f"'{nm}' ({sid}) is enabled but its '- Result' sheet was not found; skipped.")
+            continue
+        rws = list(wb[sheet].iter_rows(values_only=True))
+        hi = next((i for i, r in enumerate(rws) if r and r[0] == "Include"), None)
+        if hi is None:
+            warnings.append(f"'{nm}' ({sid}): result sheet layout not recognised; skipped.")
+            continue
+        ci = {str(c).strip(): j for j, c in enumerate(rws[hi]) if c}
+        missing = [k for k in ("Expiry", "Entry Date", "Exit Time", "Profit") if k not in ci]
+        if missing:
+            warnings.append(f"'{nm}' ({sid}): missing column(s) {missing}; skipped.")
+            continue
+        for r in rws[hi + 1:]:
+            if not r or r[0] is None:
+                continue
+            rows.append({"Strategy": nm, "Expiry": r[ci["Expiry"]], "_entry": r[ci["Entry Date"]],
+                        "_exit": r[ci["Exit Time"]], "P/L": r[ci["Profit"]]})
+    if not rows:
+        raise ValueError(f"'{name}': none of the enabled strategies had a readable result sheet.")
+
+    t = pd.DataFrame(rows)
+    t["Entry DateTime"] = pd.to_datetime(t["_entry"].astype(str).str.extract(r"(\d{4}-\d{2}-\d{2})")[0],
+                                         errors="coerce")
+    ex = t["_exit"].astype(str)
+    t["Exit DateTime"] = (pd.to_datetime(ex.str.extract(r"(\d{4}-\d{2}-\d{2})")[0], errors="coerce")
+                          + pd.to_timedelta(ex.str.extract(r"(\d{1,2}:\d{2})\s*$")[0] + ":00", errors="coerce"))
+    t["P/L"] = pd.to_numeric(t["P/L"], errors="coerce")
+    t["Index"] = [f"SM-{i + 1}" for i in range(len(t))]
+    t["Remarks"] = "Strategy: " + t["Strategy"]
+    t["Duration (min)"] = pd.NA  # no entry time in the source - never fabricated
+    t = t.drop(columns=["_entry", "_exit", "Strategy"])
+
+    reason = pd.Series("", index=t.index)
+    for cond, msg in ((t["Entry DateTime"].isna(), "invalid entry date; "),
+                      (t["Exit DateTime"].isna(), "invalid exit date/time; "),
+                      (t["P/L"].isna(), "invalid P/L; ")):
+        reason = reason.where(~cond, reason + msg)
+    rejected = t[reason != ""].assign(Reason=reason[reason != ""].str.rstrip("; "))
+    t = t[reason == ""].reset_index(drop=True)
+    if len(rejected):
+        warnings.append(f"{len(rejected)} row(s) rejected (see rejected-rows table).")
+    return t, rejected.reset_index(drop=True), warnings
+
+
+def detect_and_load(file_bytes, name):
+    """Auto-detect an uploaded file as a StockMock basket workbook or an AlgoTest export
+    (either column layout) and parse it. Returns (trades, rejected, warnings, kind)."""
+    ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    if ext == "xlsx" and is_stockmock_workbook(file_bytes):
+        t, rej, warn = load_stockmock(file_bytes, name)
+        return t, rej, warn, "StockMock"
+    df = read_table(io.BytesIO(file_bytes), name)
+    t, rej, warn = load_algotest(df, name)
+    return t, rej, warn, "AlgoTest"
+
+
+def hub_merge(frames, capital, charges):
+    """Merge parsed trade frames into one chronological master log. Total charges are spread
+    evenly across every trade (the source files carry no per-trade charge). `P/L` is replaced
+    with Net P/L so metrics()/equity()/monthly_matrix() work on it unchanged; Gross P/L and
+    Charges stay as their own columns."""
+    parts = [f for f in frames if f is not None and len(f)]
+    if not parts:
+        return pd.DataFrame()
+    m = pd.concat(parts, ignore_index=True, sort=False)
+    m = m.sort_values(["Exit DateTime", "Entry DateTime"], kind="stable").reset_index(drop=True)
+    n = len(m)
+    charge = (charges / n) if charges and n else 0.0
+    m["Gross P/L"] = m["P/L"]
+    m["Charges"] = charge
+    m["Net P/L"] = m["Gross P/L"] - m["Charges"]
+    m["Return %"] = (m["Net P/L"] / capital * 100) if capital else None
+    m["P/L"] = m["Net P/L"]
+    m.insert(0, "Trade #", range(1, n + 1))
+    return m
+
+
+def hub_equity(t, capital):
+    """Equity curve starting at `capital` (not 0), with the standard peak-relative drawdown %
+    (underwater curve) - distinct from Max-Drawdown-as-%-of-capital, which hub_metrics gives."""
+    e = equity(t)
+    e["Equity"] = capital + e["Cum P&L"]
+    peak = e["Equity"].cummax()
+    e["Drawdown %"] = ((peak - e["Equity"]) / peak.where(peak != 0)).fillna(0) * 100
+    return e
+
+
+def hub_metrics(t, capital):
+    """metrics() plus capital-based figures: ROI % and Max Drawdown as a simple % of capital
+    (not peak-relative - that distinction matters, see hub_equity)."""
+    m = metrics(t)
+    ok = bool(capital) and m["Total Trades"]
+    m["ROI %"] = (m["Net P&L"] / capital * 100) if ok else None
+    m["Max Drawdown % of Capital"] = (m["Max Drawdown"] / capital * 100) if ok and m["Max Drawdown"] else None
+    return m
+
+
+def hub_monthly_matrix(t, capital):
+    """monthly_matrix() with each year's Return % against the fixed capital (not annualised)."""
+    mat, yearly = monthly_matrix(t)
+    if capital and len(yearly):
+        yearly = yearly.copy()
+        yearly["Return %"] = yearly["Net P&L"] / capital * 100
+    return mat, yearly

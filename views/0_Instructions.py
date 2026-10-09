@@ -28,7 +28,10 @@ st.html(R.wrap(
          "and a list of any rows it could not classify"],
         ["2 · Backtest Report", "The two result files AlgoTest gave you (Long and Short)",
          "KPI cards, Long / Short / Combined comparison, cumulative P&amp;L and drawdown charts, regime split, monthly heatmap, "
-         "yearly and rolling-return tables, risk summary, filterable trade ledger, Excel / CSV exports"]])
+         "yearly and rolling-return tables, risk summary, filterable trade ledger, Excel / CSV exports"],
+        ["3 · Strategy Hub", "Any number of AlgoTest files (either column layout) or StockMock basket workbooks, together",
+         "One merged, capital-based trade log and dashboard - equity curve starting at your capital, drawdown %, "
+         "ROI, a monthly/yearly matrix and a combined master trade log, exported as one Excel report"]])
 
     + R.h2("B", "The workflow in 6 steps")
     + steps([
@@ -91,7 +94,25 @@ st.html(R.wrap(
         ["7", "Trade Ledger &amp; Exports", "All / Long / Short / Winning / Losing tables with search and Excel / CSV export"],
         ["8", "Conclusion", "Factual summary and disclaimer"]])
 
-    + R.h2("E", "How every number is calculated")
+    + R.h2("E", "Page 3 · Strategy Hub - details")
+    + ul([
+        "<b>Upload as many files as you like</b>, mixing sources freely: AlgoTest exports (either column layout) and "
+        "StockMock basket workbooks (.xlsx with a 'Basket Strategies' sheet) in the same batch.",
+        "<b>Format is auto-detected</b> per file - you don't choose it. A chip under the uploader shows what each "
+        "file was read as (AlgoTest / StockMock) and its trade count; a file that fails shows a clear reason instead "
+        "of being silently skipped.",
+        "<b>StockMock rows</b> come from each enabled (Run = True) strategy's own result sheet - one row per expiry "
+        "cycle. Only the net P/L and exit time are available at that level, so strike, option type, position, entry/exit "
+        "price and duration are left blank there rather than guessed.",
+        "<b>Initial Capital</b> is the starting point of the equity curve (it adds each trade's Net P&amp;L on top) "
+        "and the denominator for every % figure on this page (ROI, yearly return %, drawdown % of capital).",
+        "<b>Total Charges</b> is spread evenly across every merged trade, since none of the source files carry a "
+        "per-trade charge: Net P/L = Gross P/L − (Total Charges ÷ number of trades).",
+        "<b>Combined Master Trade Log</b> lists every trade chronologically with a Source column (which file it came "
+        "from), searchable and split into All / Winning / Losing / By file tabs; export the full merged set as CSV "
+        "or a formatted Excel report."])
+
+    + R.h2("F", "How every number is calculated")
     + R.table(["Metric", "Definition"], [
         ["Trade P&amp;L", "The <code>P/L</code> of the AlgoTest trade row (rupees, as exported)"],
         ["Net P&amp;L", "Sum of trade P&amp;L"],
@@ -110,7 +131,7 @@ st.html(R.wrap(
         ["Combined metrics", "Always recomputed from the combined trade records - never by averaging Long and Short"],
         ["% returns", "Only when you enter capital; otherwise n/a"]])
 
-    + R.h2("F", "Troubleshooting")
+    + R.h2("G", "Troubleshooting")
     + R.table(["Problem", "What to check"], [
         ["&ldquo;Missing required column(s)&rdquo;", "The file is not the expected type. Splitter needs the TradingView columns; the report needs AlgoTest columns (see C and D)"],
         ["File not accepted", "Use .csv or .xlsx only. Re-export if the file is corrupt or empty"],
@@ -119,12 +140,12 @@ st.html(R.wrap(
         ["Report shows n/a", "That metric cannot be computed from the data (e.g. profit factor with no losses, ROI without capital)"],
         ["No trades after filtering", "Widen the date range or clear the year / month filters"]])
 
-    + R.h2("G", "Limits to be aware of")
+    + R.h2("H", "Limits to be aware of")
     + ul([
         "Drawdown uses closed trades only; open-trade swings inside a trade are not visible in AlgoTest trade files.",
         "Results are only as good as the AlgoTest files; costs or slippage not in those files are not added.",
         "Long and Short are separated by the file they came from, not by reading option type.",
         "Backtested results are hypothetical and do not guarantee future performance."])
-    + R.h2("H", "Run the app")
+    + R.h2("I", "Run the app")
     + "<p>In a terminal: <code>cd algotest_trade_visualizer-main</code>, <code>pip install -r requirements.txt</code>, "
       "then <code>python -m streamlit run app.py</code>. Tests: <code>python -m pytest tests -q</code>.</p>", "guide"))

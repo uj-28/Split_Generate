@@ -71,6 +71,13 @@ flowchart LR
 | **Robust import** | Slippage-adjusted exports, reordered columns, `.csv` or `.xlsx`, merged reports (`Trade #`) |
 | **Honest by design** | Rejected rows are listed; anything that can't be computed shows **n/a** instead of a guess |
 
+### Stage 3 — Strategy Hub
+A separate, dark-themed account-level dashboard for merging **any number** of files at once.
+- Upload AlgoTest exports (either column layout) **and** StockMock basket workbooks together — format is auto-detected per file
+- Set an Initial Capital and (optional) Total Charges — charges are spread evenly across every merged trade
+- One combined, chronological trade log, equity curve starting at your capital, drawdown %, ROI, and a monthly/yearly matrix
+- Search / filter the master trade log (All, Winning, Losing, by source file) and export the full merged report as Excel
+
 ---
 
 ## Quick start
@@ -136,13 +143,16 @@ Follow the [Quick start](#quick-start) above. Your files then never leave your c
 
 ```
 app.py                         entry point + navigation
-core.py                        all logic: splitting, AlgoTest import, metrics
-report.py                      HTML/CSS building blocks + shared design
+core.py                        all logic: splitting, AlgoTest/StockMock import, metrics
+report.py                      HTML/CSS building blocks + shared (light) design - Stages 1-2
+hub.py                         HTML/CSS building blocks for the Strategy Hub's dark theme
 views/                         (not 'pages/' - that name makes Streamlit flash its default menu)
   0_Instructions.py            in-app user guide
   1_Signal_Splitter.py         stage 1
   2_Backtest_Dashboard.py      stages 2-3
-tests/test_core.py             automated tests
+  3_Strategy_Hub.py            stage 3 - multi-file AlgoTest/StockMock merge
+tests/test_core.py             tests against your own example files (local-only, see below)
+tests/test_smoke.py            synthetic-data tests - run everywhere, including CI
 .streamlit/config.toml         theme + upload limit
 legacy_clktrd_app.py           original .clktrd viewer (not in the menu)
 ```
@@ -153,8 +163,9 @@ legacy_clktrd_app.py           original .clktrd viewer (not in the menu)
 python -m pytest tests -q
 ```
 
-- `tests/test_smoke.py` uses synthetic data, so it runs anywhere. It pushes fake TradingView and AlgoTest files through the
-  whole pipeline (split → import → metrics → Excel report) and checks that every page renders without an error.
+- `tests/test_smoke.py` uses synthetic data, so it runs anywhere. It pushes fake TradingView, AlgoTest (both column
+  layouts) and StockMock files through the whole pipeline (split → import → merge → metrics → Excel report) and
+  checks that every page renders without an error.
 - `tests/test_core.py` checks the splitter and every KPI against your real example files, recalculated independently.
   Those CSVs are local-only (never committed), so these tests are **skipped** wherever the files aren't present.
 - **GitHub runs the tests on every push** (`.github/workflows/tests.yml`). A red ❌ on the commit, plus an email,

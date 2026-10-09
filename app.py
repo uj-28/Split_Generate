@@ -8,4 +8,5 @@ st.navigation([
     st.Page("views/0_Instructions.py", title="Instructions", icon=":material/menu_book:", default=True),
     st.Page("views/1_Signal_Splitter.py", title="1 · Signal Splitter", icon=":material/content_cut:"),
     st.Page("views/2_Backtest_Dashboard.py", title="2 · Backtest Report", icon=":material/monitoring:"),
+    st.Page("views/3_Strategy_Hub.py", title="3 · Strategy Hub", icon=":material/hub:"),
 ]).run()

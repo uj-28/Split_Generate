@@ -54,6 +54,7 @@ body:has(.sh) [data-testid=stTabs] [aria-selected=true] {{ color:{TEXT} !importa
 .sh .chip .tag{{ font-size:9.5px; font-weight:800; letter-spacing:.04em; padding:2px 7px; border-radius:20px }}
 .sh .chip .tag.algo{{ background:rgba(76,141,255,.16); color:{ACCENT} }}
 .sh .chip .tag.sm{{ background:rgba(34,195,230,.16); color:{ACCENT2} }}
+.sh .chip .tag.pr{{ background:rgba(245,181,68,.16); color:{WARN} }}
 .sh .chip .n{{ color:{MUTED} }}
 .sh .chip.err{{ border-color:rgba(251,91,91,.45) }}
 
@@ -116,8 +117,8 @@ def kpis(items):
 
 
 def chip(name, kind, n, warn=None, err=None):
-    tag = "sm" if kind == "StockMock" else "algo"
-    label = "StockMock" if kind == "StockMock" else "AlgoTest"
+    tag = {"StockMock": "sm", "Previous report": "pr"}.get(kind, "algo")
+    label = kind if kind in ("StockMock", "Previous report") else "AlgoTest"
     cls = " err" if err else ""
     body = f'<span class="tag {tag}">{label}</span><b>{html.escape(name)}</b><span class="n">{n} trades</span>'
     if err:

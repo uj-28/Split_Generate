@@ -43,15 +43,53 @@ with st.expander("Which files can I upload?"):
         ["StockMock (.xlsx)", "A basket workbook with a 'Basket Strategies' sheet and one '# S-n - Result' sheet per strategy",
          "One row per expiry cycle, from every enabled (Run=True) strategy. No per-leg strike/price or entry "
          "time is available at this level, so those columns are blank and Duration is left out rather than guessed"],
+        ["A previous report from this app", "Any 'Download full report (Excel)' this app has given you before (Backtest "
+         "Report or an earlier Strategy Hub export)", "Its 'Trades' sheet is re-imported directly, so you can merge an "
+         "older report back in alongside new files"],
     ])))
 
 up = st.file_uploader("Drop trade report files here, or browse", type=["csv", "xlsx"], accept_multiple_files=True)
+cache = st.session_state.get("hub_cache")
 c1, c2 = st.columns(2)
-capital = c1.number_input("Initial Capital (₹)", min_value=0.0, value=200000.0, step=10000.0, format="%.0f")
-charges = c2.number_input("Total Charges (₹)", min_value=0.0, value=0.0, step=100.0, format="%.0f",
+capital = c1.number_input("Initial Capital (₹)", min_value=0.0, step=10000.0, format="%.0f", key="hub_capital",
+                          value=(cache or {}).get("capital", 200000.0))
+charges = c2.number_input("Total Charges (₹)", min_value=0.0, step=100.0, format="%.0f", key="hub_charges",
+                          value=(cache or {}).get("charges", 0.0),
                           help="Spread evenly across every merged trade (the source files carry no per-trade charge).")
 
-if not up:
+# ====================== per-file parsing (new upload), or the last successful run from this session ======================
+if up:
+    frames, chips, errors, notes = [], [], [], []
+    for f in up:
+        try:
+            t, rej, warn, kind = core.detect_and_load(f.getvalue(), f.name)
+        except ValueError as e:
+            chips.append(hub.chip(f.name, "", 0, err=True))
+            errors.append(f"{f.name}: {e}")
+            continue
+        t = t.rename(columns={"Direction": "Source"})
+        t["Source"] = f.name
+        frames.append(t)
+        chips.append(hub.chip(f.name, kind, len(t)))
+        if len(rej):
+            notes.append(f"{f.name}: {len(rej)} row(s) rejected - {'; '.join(rej['Reason'].unique()[:3])}")
+        notes += [f"{f.name}: {w}" for w in warn]
+    if frames:  # keep the last successful parse in memory - switching pages or closing the uploader won't lose it
+        st.session_state["hub_cache"] = {"frames": frames, "chips": chips, "errors": errors, "notes": notes,
+                                         "names": [f.name for f in up], "capital": capital, "charges": charges}
+    cache = st.session_state.get("hub_cache") if frames else None
+elif cache:
+    frames, chips, errors, notes = cache["frames"], cache["chips"], cache["errors"], cache["notes"]
+    b1, b2 = st.columns([5, 1])
+    b1.html(hub.wrap(f'<div class="ok">Showing the last report generated in this session '
+                     f'({", ".join(cache["names"])}) - drop new files above to replace it.</div>'))
+    if b2.button("Clear", width="stretch"):
+        del st.session_state["hub_cache"]
+        st.rerun()
+else:
+    frames, chips, errors, notes = [], [], [], []
+
+if not frames:
     st.html(hub.wrap('<div class="empty"><b>Upload your trade reports to build the dashboard</b>'
                      '<div class="steps">① Export your results from AlgoTest or StockMock<br>'
                      '② Drop one or more files above - Long, Short, multiple strategies, mixed sources, all fine<br>'
@@ -59,29 +97,9 @@ if not up:
                      '④ Get one merged equity curve, KPI set and trade log</div></div>'))
     st.stop()
 
-# ====================== per-file parsing ======================
-frames, chips, errors, notes = [], [], [], []
-for f in up:
-    try:
-        t, rej, warn, kind = core.detect_and_load(f.getvalue(), f.name)
-    except ValueError as e:
-        chips.append(hub.chip(f.name, "", 0, err=True))
-        errors.append(f"{f.name}: {e}")
-        continue
-    t = t.rename(columns={"Direction": "Source"})
-    t["Source"] = f.name
-    frames.append(t)
-    chips.append(hub.chip(f.name, kind, len(t)))
-    if len(rej):
-        notes.append(f"{f.name}: {len(rej)} row(s) rejected - {'; '.join(rej['Reason'].unique()[:3])}")
-    notes += [f"{f.name}: {w}" for w in warn]
-
 st.html(hub.wrap('<div class="filebar">' + "".join(chips) + "</div>"
                  + "".join(f'<div class="bad">{e}</div>' for e in errors)
                  + "".join(f'<div class="warn">{n}</div>' for n in notes)))
-
-if not frames:
-    st.stop()
 
 m = core.hub_merge(frames, capital, charges)
 mm = core.hub_metrics(m, capital)

@@ -166,3 +166,61 @@ def test_hub_merge_with_no_files_or_zero_charges():
 def test_hub_rejects_unrecognised_file():
     with pytest.raises(ValueError):
         core.detect_and_load(pd.DataFrame({"A": [1], "B": [2]}).to_csv(index=False).encode(), "junk.csv")
+
+
+def test_hub_detailed_algotest_accepts_dd_mm_yyyy_dates():
+    """Regression: some exports of the detailed AlgoTest format use DD-MM-YYYY (e.g. after a
+    round-trip through Excel) instead of AlgoTest's usual YYYY-MM-DD - every row was being
+    rejected as 'invalid entry date/time' until _dates() learned the fallback format."""
+    df = algotest_detailed_csv(6)
+    for c in ("Entry-Date", "ExitDate"):
+        df[c] = pd.to_datetime(df[c]).dt.strftime("%d-%m-%Y")
+    t, rej, warn, kind = core.detect_and_load(df.to_csv(index=False).encode("utf-8-sig"), "dd-mm-yyyy.csv")
+    assert kind == "AlgoTest" and len(t) == 6 and rej.empty
+    expected = [f"{(pd.Timestamp('2024-10-07') + pd.Timedelta(days=i)):%Y-%m-%d}" for i in range(1, 7)]
+    assert t.sort_values("Entry DateTime")["Entry DateTime"].dt.strftime("%Y-%m-%d").tolist() == expected
+
+
+def own_report_workbook(n=10, with_source_col=False):
+    """A minimal stand-in for this app's own 'Download full report' export: a 'Report Info'
+    sheet plus a 'Trades' sheet with the header on row 4 (matches core.report_workbook())."""
+    import core as _core
+    cols = ["Trade #", "Source" if with_source_col else "Direction", "Entry DateTime", "Exit DateTime",
+           "Duration (min)", "P/L"]
+    rows = []
+    for i in range(1, n + 1):
+        e = pd.Timestamp("2025-01-01") + pd.Timedelta(days=i)
+        rows.append([i, "prior.csv" if with_source_col else ("Long" if i % 2 else "Short"),
+                    e, e + pd.Timedelta(hours=2), 120, 100.0 if i % 2 else -50.0])
+    trades = pd.DataFrame(rows, columns=cols)
+    info = pd.DataFrame({"Item": ["x"], "Value": ["y"]})
+    buf = io.BytesIO()
+    with pd.ExcelWriter(buf) as xw:
+        info.to_excel(xw, sheet_name="Report Info", index=False, startrow=3)
+        trades.to_excel(xw, sheet_name="Trades", index=False, startrow=3)
+    return buf.getvalue()
+
+
+def test_hub_reimports_its_own_previous_report():
+    assert core.is_own_report_workbook(own_report_workbook())
+    t, rej, warn, kind = core.detect_and_load(own_report_workbook(10), "old.xlsx")
+    assert kind == "Previous report" and len(t) == 10 and rej.empty
+    assert "Direction" not in t.columns  # folded into Remarks, not left to collide with Source
+    assert t["Remarks"].str.contains("Re-imported").all()
+    assert pd.api.types.is_datetime64_any_dtype(t["Entry DateTime"])
+
+    # re-importing a PREVIOUS HUB export (which already has its own Source/Gross P/L/Charges/
+    # Net P/L columns, not Direction) must not collide with hub_merge()'s own column names
+    t2, _, _, _ = core.detect_and_load(own_report_workbook(4, with_source_col=True), "old_hub.xlsx")
+    assert "Source" in t2.columns and len(t2) == 4
+
+
+def test_hub_merge_with_reimported_report_does_not_duplicate_trade_number():
+    """Regression: a re-imported report's 'Trades' sheet already has a 'Trade #' column;
+    hub_merge() used to crash with 'cannot insert Trade #, already exists'."""
+    algo, _, _, _ = core.detect_and_load(algotest_detailed_csv(5).to_csv(index=False).encode("utf-8-sig"), "a.csv")
+    old, _, _, _ = core.detect_and_load(own_report_workbook(5), "old.xlsx")
+    m = core.hub_merge([algo, old], capital=100000, charges=0)
+    assert len(m) == 10
+    assert m["Trade #"].tolist() == list(range(1, 11))
+    assert not m["Trade #"].duplicated().any()

@@ -123,7 +123,15 @@ def _times(s):
 
 
 def _dates(s):
-    return pd.to_datetime(s.astype(str).str.strip().str[:10], format="%Y-%m-%d", errors="coerce")
+    """Most AlgoTest exports use YYYY-MM-DD; some (e.g. after a round-trip through Excel) use
+    DD-MM-YYYY instead. Try the unambiguous ISO form first, then fall back to DD-MM-YYYY for
+    whatever didn't parse - never MM-DD-YYYY, which would silently swap day and month."""
+    s = s.astype(str).str.strip().str[:10]
+    d = pd.to_datetime(s, format="%Y-%m-%d", errors="coerce")
+    need = d.isna() & s.str.match(r"^\d{2}-\d{2}-\d{4}$", na=False)
+    if need.any():
+        d = d.where(~need, pd.to_datetime(s[need], format="%d-%m-%Y", errors="coerce"))
+    return d
 
 
 _ALIASES = {"index": "Index", "trade #": "Index", "trade no": "Index", "trade number": "Index",
@@ -629,10 +637,68 @@ def load_stockmock(file_bytes, name):
     return t, rejected.reset_index(drop=True), warnings
 
 
+def is_own_report_workbook(file_bytes):
+    """Quick format sniff: is this one of this app's own 'Download full report' exports
+    (Backtest Report or Strategy Hub Report), re-uploaded?"""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True)
+        sheets = wb.sheetnames
+        wb.close()
+    except Exception:
+        return False
+    return "Trades" in sheets and "Report Info" in sheets
+
+
+def load_own_report(file_bytes, name):
+    """Re-import this app's own exported report: read its 'Trades' sheet directly - it is
+    already one row per trade with real Entry/Exit DateTime values, from either the Backtest
+    Report (a 'Direction' column of Long/Short) or a previous Strategy Hub export (a 'Source'
+    column instead). Whichever P/L the sheet has becomes this file's Gross P/L on re-merge -
+    any charges already baked into a prior Hub export are not double-counted, since charges
+    are only ever applied once, at final export time."""
+    try:
+        raw = pd.read_excel(io.BytesIO(file_bytes), sheet_name="Trades", header=3)
+    except Exception as e:
+        raise ValueError(f"'{name}' could not be read as an Excel workbook ({type(e).__name__}: {e}).") from e
+    need = ["Entry DateTime", "Exit DateTime", "P/L"]
+    missing = [c for c in need if c not in raw.columns]
+    if missing:
+        raise ValueError(f"'{name}' looks like a previous report, but its 'Trades' sheet is missing "
+                         f"column(s): {', '.join(missing)}.")
+    t = raw.dropna(how="all").reset_index(drop=True).copy()
+    t["Entry DateTime"] = pd.to_datetime(t["Entry DateTime"], errors="coerce")
+    t["Exit DateTime"] = pd.to_datetime(t["Exit DateTime"], errors="coerce")
+    t["P/L"] = pd.to_numeric(t["P/L"], errors="coerce")
+    if "Duration (min)" not in t:
+        t["Duration (min)"] = (t["Exit DateTime"] - t["Entry DateTime"]).dt.total_seconds() / 60
+    if "Direction" in t.columns and "Source" not in t.columns:
+        tag = "Re-imported (" + t["Direction"].astype(str) + ")"
+        t["Remarks"] = tag if "Remarks" not in t else tag + " - " + t["Remarks"].astype(str).replace("nan", "")
+        t = t.drop(columns="Direction")
+
+    reason = pd.Series("", index=t.index)
+    for cond, msg in ((t["Entry DateTime"].isna(), "invalid entry date/time; "),
+                      (t["Exit DateTime"].isna(), "invalid exit date/time; "),
+                      (t["P/L"].isna(), "invalid P/L; ")):
+        reason = reason.where(~cond, reason + msg)
+    dup = t.duplicated(["Entry DateTime", "Exit DateTime", "P/L"], keep="first") & (reason == "")
+    reason = reason.where(~dup, "duplicate trade; ")
+    rejected = t[reason != ""].assign(Reason=reason[reason != ""].str.rstrip("; "))
+    t = t[reason == ""].reset_index(drop=True)
+    warnings = []
+    if len(rejected):
+        warnings.append(f"{len(rejected)} row(s) rejected (see rejected-rows table).")
+    return t, rejected.reset_index(drop=True), warnings
+
+
 def detect_and_load(file_bytes, name):
-    """Auto-detect an uploaded file as a StockMock basket workbook or an AlgoTest export
-    (either column layout) and parse it. Returns (trades, rejected, warnings, kind)."""
+    """Auto-detect an uploaded file as a StockMock basket workbook, one of this app's own
+    exported reports, or an AlgoTest export (either column layout) and parse it.
+    Returns (trades, rejected, warnings, kind)."""
     ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
+    if ext == "xlsx" and is_own_report_workbook(file_bytes):
+        t, rej, warn = load_own_report(file_bytes, name)
+        return t, rej, warn, "Previous report"
     if ext == "xlsx" and is_stockmock_workbook(file_bytes):
         t, rej, warn = load_stockmock(file_bytes, name)
         return t, rej, warn, "StockMock"
@@ -658,6 +724,8 @@ def hub_merge(frames, capital, charges):
     m["Net P/L"] = m["Gross P/L"] - m["Charges"]
     m["Return %"] = (m["Net P/L"] / capital * 100) if capital else None
     m["P/L"] = m["Net P/L"]
+    if "Trade #" in m.columns:  # a re-imported own report already has one
+        m = m.drop(columns="Trade #")
     m.insert(0, "Trade #", range(1, n + 1))
     return m
 

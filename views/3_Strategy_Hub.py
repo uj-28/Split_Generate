@@ -83,7 +83,7 @@ elif cache:
     frames, chips, errors, notes = cache["frames"], cache["chips"], cache["errors"], cache["notes"]
     margins, names = cache.get("margins", []), cache["names"]
     b1, b2 = st.columns([5, 1])
-    b1.html(hub.wrap(f'<div class="ok">Showing the last report generated in this session '
+    b1.html(hub.wrap(f'<div class="notice-ok">Showing the last report generated in this session '
                      f'({", ".join(names)}) - drop new files above to replace it.</div>'))
     if b2.button("Clear", width="stretch"):
         del st.session_state["hub_cache"]
@@ -118,8 +118,8 @@ if cache is not None:
     cache["capital"], cache["charges"] = manual_capital, charges
 
 st.html(hub.wrap('<div class="filebar">' + "".join(chips) + "</div>"
-                 + "".join(f'<div class="bad">{e}</div>' for e in errors)
-                 + "".join(f'<div class="warn">{n}</div>' for n in notes)))
+                 + "".join(f'<div class="notice-bad">{e}</div>' for e in errors)
+                 + "".join(f'<div class="notice-warn">{n}</div>' for n in notes)))
 
 m = core.hub_merge(frames, capital, charges)
 mm = core.hub_metrics(m, capital)
@@ -204,24 +204,15 @@ if show_daily and len(daily):
     if dm:
         sel = sel[dd.dt.month.isin(dm)]
 
-    # --- new: day-wise monthly heatmap - every calendar day as its own coloured cell ---
+    # --- day-wise monthly breakdown - every calendar day's ₹ value shown directly, same table
+    #     style as the Monthly & Yearly matrix above (no hidden-behind-hover colour boxes) ---
     hdd = pd.to_datetime(sel["Date"])
     grid = sel.assign(YM=hdd.dt.to_period("M").astype(str), Day=hdd.dt.day).pivot_table(
         index="YM", columns="Day", values="Net P&L", aggfunc="sum").reindex(columns=range(1, 32)).sort_index()
     if len(grid):
-        z = grid.values
-        hover = [[f"{ym}-{d:02d}<br>₹{v:,.0f}" if pd.notna(v) else "" for d, v in zip(grid.columns, row)] for ym, row in zip(grid.index, z)]
-        cap = max(abs(pd.Series(z.flatten()).dropna()).max(), 1) if pd.notna(z).any() else 1
-        hm = go.Figure(go.Heatmap(z=z, x=[str(d) for d in grid.columns], y=list(grid.index), text=hover, hoverinfo="text",
-                                  colorscale=[[0, hub.NEG], [0.5, hub.PANEL2], [1, hub.POS]], zmid=0, zmin=-cap, zmax=cap,
-                                  xgap=3, ygap=3, showscale=False))
-        hm.update_xaxes(title="Day of month", dtick=1, side="top")
-        hm.update_yaxes(autorange="reversed")
-        with st.container(border=True):
-            chart(hm, "Day-wise Monthly Breakdown (₹ net P&L per day)", max(280, min(900, 36 * len(grid.index) + 90)))
-        st.html(hub.wrap('<p class="cap">One row per month, one column per calendar day - darker green/red means a bigger win/loss '
-                         'that day. Directly comparable to the ₹ figures in the Monthly &amp; Yearly matrix above, just at day '
-                         'resolution. Hover a cell for the exact date and amount.</p>'))
+        st.html(hub.wrap(hub.day_table(grid)
+                         + '<p class="cap">One row per month, one column per calendar day - every cell shows that day\'s '
+                           'net P&amp;L directly. Directly comparable to the Monthly &amp; Yearly matrix above, just at day resolution.</p>'))
 
     # --- daily P&L bar chart, smooth zoom/pan via a range slider ---
     if len(sel):

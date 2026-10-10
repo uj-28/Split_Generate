@@ -61,9 +61,9 @@ body:has(.sh) [data-testid=stTabs] [aria-selected=true] {{ color:{TEXT} !importa
 
 .sh .panel{{ background:{PANEL}; border:1px solid {BORDER}; border-radius:14px; padding:18px 20px; margin-bottom:16px }}
 .sh .note{{ font-size:11.5px; color:{MUTED}; line-height:1.6; margin:0 0 10px }}
-.sh .ok{{ background:rgba(34,211,160,.1); border:1px solid rgba(34,211,160,.3); color:{POS}; border-radius:9px; padding:9px 13px; font-size:12px; margin:8px 0 }}
-.sh .warn{{ background:rgba(245,181,68,.1); border:1px solid rgba(245,181,68,.35); color:{WARN}; border-radius:9px; padding:9px 13px; font-size:12px; margin:8px 0 }}
-.sh .bad{{ background:rgba(251,91,91,.1); border:1px solid rgba(251,91,91,.35); color:{NEG}; border-radius:9px; padding:9px 13px; font-size:12px; margin:8px 0 }}
+.sh .notice-ok{{ background:rgba(34,211,160,.1); border:1px solid rgba(34,211,160,.3); color:{POS}; border-radius:9px; padding:9px 13px; font-size:12px; margin:8px 0 }}
+.sh .notice-warn{{ background:rgba(245,181,68,.1); border:1px solid rgba(245,181,68,.35); color:{WARN}; border-radius:9px; padding:9px 13px; font-size:12px; margin:8px 0 }}
+.sh .notice-bad{{ background:rgba(251,91,91,.1); border:1px solid rgba(251,91,91,.35); color:{NEG}; border-radius:9px; padding:9px 13px; font-size:12px; margin:8px 0 }}
 
 .sh table{{ width:100%; border-collapse:collapse; font-size:12.5px }}
 .sh thead th{{ text-align:right; font-size:10px; letter-spacing:.06em; text-transform:uppercase; color:{MUTED2}; font-weight:700; padding:10px 10px; border-bottom:1px solid {BORDER} }}
@@ -166,3 +166,24 @@ def heatmap(mat, yearly):
     return (f'<table class="heat"><thead><tr><th style="text-align:left">Year</th>'
            + "".join(f"<th>{m}</th>" for m in mo) + '<th>Total</th><th>Return</th></tr></thead><tbody>'
            + body + "</tbody></table>")
+
+
+def day_table(grid):
+    """Year-month x day-of-month table, same visible-value style as heatmap() (text coloured by
+    sign, no background fill) - every cell shows its ₹ figure directly, nothing hidden behind a
+    hover. `grid`: a pivot with one row per 'YYYY-MM' period, columns 1..31, values = that day's
+    net P&L (NaN = no trades that day)."""
+    import pandas as pd
+    body = ""
+    for ym, r in grid.iterrows():
+        cells = "".join(f'<td class="{R.sgn(v)}">{R.ind(v)}</td>' if not pd.isna(v) else '<td class="nil">–</td>' for v in r)
+        tot = r.sum(min_count=1)
+        body += f'<tr><td class="yr">{ym}</td>{cells}<td class="{R.sgn(tot)}">{"–" if pd.isna(tot) else R.ind(tot)}</td></tr>'
+    colt = grid.sum(min_count=1)
+    grand = grid.values[~pd.isna(grid.values)].sum() if grid.size else 0
+    tot_cells = "".join(f'<td class="{R.sgn(v)}">{R.ind(v)}</td>' if not pd.isna(v) else '<td class="nil">–</td>' for v in colt)
+    body += f'<tr class="tot"><td class="yr">All</td>{tot_cells}<td class="{R.sgn(grand)}">{R.ind(grand)}</td></tr>'
+    return (f'<div style="overflow-x:auto"><table class="heat" style="min-width:1400px"><thead><tr>'
+           f'<th style="text-align:left">Month</th>'
+           + "".join(f"<th>{d}</th>" for d in grid.columns) + '<th>Total</th></tr></thead><tbody>'
+           + body + "</tbody></table></div>")

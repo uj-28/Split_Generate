@@ -105,12 +105,22 @@ st.html(R.wrap(
         "cycle. Only the net P/L and exit time are available at that level, so strike, option type, position, entry/exit "
         "price and duration are left blank there rather than guessed.",
         "<b>Initial Capital</b> is the starting point of the equity curve (it adds each trade's Net P&amp;L on top) "
-        "and the denominator for every % figure on this page (ROI, yearly return %, drawdown % of capital).",
+        "and the denominator for every % figure on this page (ROI, yearly return %, drawdown % of capital). If a "
+        "StockMock file carries its own 'Estimated Margin', a checkbox offers to use that figure as capital instead "
+        "of typing one in - untick it to go back to the manual value.",
         "<b>Total Charges</b> is spread evenly across every merged trade, since none of the source files carry a "
         "per-trade charge: Net P/L = Gross P/L − (Total Charges ÷ number of trades).",
+        "<b>Day-wise Breakdown</b> sums every trade (across every uploaded file) that exited on each calendar day - "
+        "pick a year and month to see it. This is the same basis StockMock itself uses for its own day-level Win% "
+        "and Max Profit/Loss, so it's the fastest way to check a Hub import against the source report.",
+        "<b>Report sections</b> can each be shown or hidden with the checkboxes above the KPI cards - useful for a "
+        "shorter screen or a specific screenshot. Hiding a section never affects the Excel export, which always "
+        "has everything.",
         "<b>Combined Master Trade Log</b> lists every trade chronologically with a Source column (which file it came "
         "from), searchable and split into All / Winning / Losing / By file tabs; export the full merged set as CSV "
-        "or a formatted Excel report."])
+        "or a formatted Excel report.",
+        "<b>Your last upload is remembered</b> for this browser session - navigating to another page and back (Page "
+        "2 included) still shows your results, with a Clear button to start over."])
 
     + R.h2("F", "How every number is calculated")
     + R.table(["Metric", "Definition"], [

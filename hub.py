@@ -28,6 +28,10 @@ body:has(.sh) [data-testid=stBaseButton-primary] {{ background:{ACCENT} !importa
 body:has(.sh) [data-testid=stBaseButton-secondary] {{ background:{PANEL2} !important; color:{TEXT} !important; border-color:{BORDER} !important }}
 body:has(.sh) [data-testid=stDataFrame] {{ border:1px solid {BORDER} !important; border-radius:10px !important }}
 body:has(.sh) [data-testid=stExpander] {{ background:{PANEL} !important; border:1px solid {BORDER} !important; border-radius:12px !important }}
+body:has(.sh) [data-testid=stVerticalBlockBorderWrapper] {{ background:{PANEL} !important; border:1px solid {BORDER} !important; box-shadow:none !important }}
+body:has(.sh) [data-testid=stCheckbox] label p, body:has(.sh) [data-testid=stWidgetLabel] label p {{ color:{MUTED} !important }}
+body:has(.sh) [data-baseweb=select] > div {{ background:{PANEL2} !important; color:{TEXT} !important; border-color:{BORDER} !important }}
+body:has(.sh) [data-baseweb=popover] li {{ background:{PANEL} !important; color:{TEXT} !important }}
 body:has(.sh) [data-testid=stTabs] [role=tab] {{ color:{MUTED} !important }}
 body:has(.sh) [data-testid=stTabs] [aria-selected=true] {{ color:{TEXT} !important }}
 

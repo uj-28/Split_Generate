@@ -31,25 +31,40 @@ files = {d: sb.file_uploader(f"{d} backtest", type=["csv", "xlsx"], key=d) for d
 use_ex = all(p.exists() for p in EXAMPLES.values()) and sb.checkbox("Use the bundled example files",
                                                                     value=st.query_params.get("demo") == "1")
 
+# files chosen afresh in this run, or (if nothing new was dropped) the last successful parse
+# from this session - so navigating to another page and back doesn't lose an upload.
+bt_cache = st.session_state.get("bt_cache", {})
+any_upload = any(files.values())
 frames, rejected, notes, fnames = {}, [], [], {}
-for d in ("Long", "Short"):
-    raw = None
-    if files[d]:
-        raw = (files[d].getvalue(), files[d].name)
-    elif use_ex:
-        raw = (EXAMPLES[d].read_bytes(), EXAMPLES[d].name)
-    if not raw:
-        continue
-    try:
-        t, rej, warns = load(*raw, d)
-    except ValueError as e:
-        sb.error(f"{d}: {e}")
-        continue
-    frames[d] = t
-    fnames[d] = raw[1]
-    rejected.append(rej.assign(File=d))
-    sb.success(f"{d}: {len(t)} trades" + (f" · {len(rej)} rejected" if len(rej) else ""))
-    notes += [f"{d}: {w}" for w in warns]
+if any_upload or use_ex:
+    for d in ("Long", "Short"):
+        raw = None
+        if files[d]:
+            raw = (files[d].getvalue(), files[d].name)
+        elif use_ex:
+            raw = (EXAMPLES[d].read_bytes(), EXAMPLES[d].name)
+        if not raw:
+            continue
+        try:
+            t, rej, warns = load(*raw, d)
+        except ValueError as e:
+            sb.error(f"{d}: {e}")
+            continue
+        frames[d] = t
+        fnames[d] = raw[1]
+        rejected.append(rej.assign(File=d))
+        sb.success(f"{d}: {len(t)} trades" + (f" · {len(rej)} rejected" if len(rej) else ""))
+        notes += [f"{d}: {w}" for w in warns]
+    if frames:
+        st.session_state["bt_cache"] = {"frames": frames, "fnames": fnames, "rejected": rejected, "notes": notes}
+elif bt_cache:
+    frames, fnames, rejected, notes = bt_cache["frames"], bt_cache["fnames"], bt_cache["rejected"], bt_cache["notes"]
+    sb.info("Showing the last results from this session - upload new files above to replace them.")
+    for d in frames:
+        sb.success(f"{d}: {len(frames[d])} trades (cached)")
+    if sb.button("Clear cached results"):
+        del st.session_state["bt_cache"]
+        st.rerun()
 
 HERO = lambda a: st.html(R.wrap(R.hero("STAGES 2-3 OF 3", "Long + Short Backtest Report",
                                        "Built from the AlgoTest trade records you upload. Nothing is estimated: anything that "
@@ -164,171 +179,184 @@ if len(frames) == 2:
     if both:
         st.warning(f"{len(both)} entry timestamp(s) appear in both files (kept - check they are not duplicates).")
 
+st.html(R.wrap(R.h2("", "Report sections")))
+tg = st.columns(8)
+labels = ["Summary", "Dashboard", "Regime", "Deep-Dive", "Risk & Capital", "Distribution", "Trade Ledger", "Conclusion"]
+show = {lab: tg[i].checkbox(lab, True, key=f"bt_show_{i}") for i, lab in enumerate(labels)}
+
 # 1 -------------------------------------------------------------------------------------
-dd_txt = f' ({R.dt(mc["DD From"])} – {R.dt(mc["DD To"])})' if mc["DD From"] is not None else ""
-summary = (f'Across <b>{mc["Total Trades"]:,}</b> trades ({R.dt(v["Entry DateTime"].min())} – {R.dt(v["Exit DateTime"].max())}) the strategy '
-           f'returned <b>{R.inr(mc["Net P&L"])}</b> with a <b>{R.num(mc["Win Rate %"], 2, "%")}</b> win rate and a profit factor of '
-           f'<b>{R.num(mc["Profit Factor"])}</b>. The maximum closed-trade drawdown was <b>{R.inr(mc["Max Drawdown"])}</b>{dd_txt}.')
-if len(names) == 3:
-    summary += (f' Long contributed {R.inr(M["Long"]["Net P&L"])} over {M["Long"]["Total Trades"]} trades and Short '
-                f'{R.inr(M["Short"]["Net P&L"])} over {M["Short"]["Total Trades"]} trades.')
-st.html(R.wrap(R.h2(1, "Executive Summary") + R.kpis([
-    ("Net P&L", R.inr(mc["Net P&L"]), f'{mc["Total Trades"]:,} trades' + (f' · ROI {CM["Combined"]["ROI %"]:.2f}%' if cap else ""),
-     "pos" if mc["Net P&L"] > 0 else "neg" if mc["Net P&L"] < 0 else ""),
-    ("Win rate", R.num(mc["Win Rate %"], 2, "%"), f'{mc["Winning Trades"]} wins · {mc["Losing Trades"]} losses · {mc["Breakeven Trades"]} BE', ""),
-    ("Profit factor", R.num(mc["Profit Factor"]), "Gross profit ÷ |gross loss|", ""),
-    ("Max drawdown", R.inr(mc["Max Drawdown"]), "Peak-to-trough, closed trades"
-     + (f' · {CM["Combined"]["Max DD % of Capital"]:.2f}% of capital' if cap else ""), "neg")]) + f"<p>{summary}</p>"))
+if show["Summary"]:
+    dd_txt = f' ({R.dt(mc["DD From"])} – {R.dt(mc["DD To"])})' if mc["DD From"] is not None else ""
+    summary = (f'Across <b>{mc["Total Trades"]:,}</b> trades ({R.dt(v["Entry DateTime"].min())} – {R.dt(v["Exit DateTime"].max())}) the strategy '
+               f'returned <b>{R.inr(mc["Net P&L"])}</b> with a <b>{R.num(mc["Win Rate %"], 2, "%")}</b> win rate and a profit factor of '
+               f'<b>{R.num(mc["Profit Factor"])}</b>. The maximum closed-trade drawdown was <b>{R.inr(mc["Max Drawdown"])}</b>{dd_txt}.')
+    if len(names) == 3:
+        summary += (f' Long contributed {R.inr(M["Long"]["Net P&L"])} over {M["Long"]["Total Trades"]} trades and Short '
+                    f'{R.inr(M["Short"]["Net P&L"])} over {M["Short"]["Total Trades"]} trades.')
+    st.html(R.wrap(R.h2(1, "Executive Summary") + R.kpis([
+        ("Net P&L", R.inr(mc["Net P&L"]), f'{mc["Total Trades"]:,} trades' + (f' · ROI {CM["Combined"]["ROI %"]:.2f}%' if cap else ""),
+         "pos" if mc["Net P&L"] > 0 else "neg" if mc["Net P&L"] < 0 else ""),
+        ("Win rate", R.num(mc["Win Rate %"], 2, "%"), f'{mc["Winning Trades"]} wins · {mc["Losing Trades"]} losses · {mc["Breakeven Trades"]} BE', ""),
+        ("Profit factor", R.num(mc["Profit Factor"]), "Gross profit ÷ |gross loss|", ""),
+        ("Max drawdown", R.inr(mc["Max Drawdown"]), "Peak-to-trough, closed trades"
+         + (f' · {CM["Combined"]["Max DD % of Capital"]:.2f}% of capital' if cap else ""), "neg")]) + f"<p>{summary}</p>"))
 
 # 2 -------------------------------------------------------------------------------------
-cards = [(n, COLORS[n], [("Net P&L", R.inr(M[n]["Net P&L"])), ("Win rate", R.num(M[n]["Win Rate %"], 1, "%")),
-                         ("Profit factor", R.num(M[n]["Profit Factor"])), ("Avg / trade", R.inr(M[n]["Avg P&L / Trade"])),
-                         ("Max drawdown", R.inr(M[n]["Max Drawdown"])), ("Worst trade", R.inr(M[n]["Largest Loss"]))])
-         for n in names]
-st.html(R.wrap(R.h2(2, "Comparative Performance Dashboard") + R.cards(cards)
-               + R.table(["Metric"] + names, spec_rows([M[n] for n in names]))
-               + '<p class="cap">Every figure is computed from that column\'s own trade records - Combined is never an average of Long and Short. '
-                 'Win rate = wins ÷ all trades; profit factor = gross profit ÷ |gross loss| (n/a when there is no loss).</p>'))
-EQ = {n: core.equity(s) for n, s in SER.items()}
-fig = go.Figure()
-for n in names:
-    fig.add_scatter(x=EQ[n]["Exit DateTime"], y=EQ[n]["Cum P&L"], name=n, mode="lines",
-                    line=dict(color=COLORS[n], width=3 if n == "Combined" else 1.7))
-chart(fig, "Cumulative realised P&L (₹) - restarts at 0 on the first filtered trade", 360)
-fig = go.Figure()
-for n in names:
-    fig.add_scatter(x=EQ[n]["Exit DateTime"], y=-EQ[n]["Drawdown"], name=n, mode="lines", fill="tozeroy" if n == "Combined" else None,
-                    line=dict(color=COLORS[n] if n != "Combined" else R.NEG, width=1.4))
-chart(fig, "Underwater curve - drawdown below running peak (₹)", 260)
-st.caption("Drawdown = running peak of cumulative realised P&L (floored at 0) − current cumulative P&L, trades ordered by exit time. "
-           "Closed-trade basis: no intraday mark-to-market.")
+if show["Dashboard"]:
+    cards = [(n, COLORS[n], [("Net P&L", R.inr(M[n]["Net P&L"])), ("Win rate", R.num(M[n]["Win Rate %"], 1, "%")),
+                             ("Profit factor", R.num(M[n]["Profit Factor"])), ("Avg / trade", R.inr(M[n]["Avg P&L / Trade"])),
+                             ("Max drawdown", R.inr(M[n]["Max Drawdown"])), ("Worst trade", R.inr(M[n]["Largest Loss"]))])
+             for n in names]
+    st.html(R.wrap(R.h2(2, "Comparative Performance Dashboard") + R.cards(cards)
+                   + R.table(["Metric"] + names, spec_rows([M[n] for n in names]))
+                   + '<p class="cap">Every figure is computed from that column\'s own trade records - Combined is never an average of Long and Short. '
+                     'Win rate = wins ÷ all trades; profit factor = gross profit ÷ |gross loss| (n/a when there is no loss).</p>'))
+    EQ = {n: core.equity(s) for n, s in SER.items()}
+    fig = go.Figure()
+    for n in names:
+        fig.add_scatter(x=EQ[n]["Exit DateTime"], y=EQ[n]["Cum P&L"], name=n, mode="lines",
+                        line=dict(color=COLORS[n], width=3 if n == "Combined" else 1.7))
+    chart(fig, "Cumulative realised P&L (₹) - restarts at 0 on the first filtered trade", 360)
+    fig = go.Figure()
+    for n in names:
+        fig.add_scatter(x=EQ[n]["Exit DateTime"], y=-EQ[n]["Drawdown"], name=n, mode="lines", fill="tozeroy" if n == "Combined" else None,
+                        line=dict(color=COLORS[n] if n != "Combined" else R.NEG, width=1.4))
+    chart(fig, "Underwater curve - drawdown below running peak (₹)", 260)
+    st.caption("Drawdown = running peak of cumulative realised P&L (floored at 0) − current cumulative P&L, trades ordered by exit time. "
+               "Closed-trade basis: no intraday mark-to-market.")
 
 # 3 -------------------------------------------------------------------------------------
-reg = []
-for n in names:
-    post = SER[n][SER[n]["Exit DateTime"] >= split]
-    for tag, s in (("full period", SER[n]), (f"from {R.dt(split)}", post)):
-        if s.empty:
-            continue
-        m = core.metrics(s)
-        reg.append([f'{n}<span class="tag">{tag}</span>', (R.inr(m["Net P&L"]), R.sgn(m["Net P&L"])), str(m["Total Trades"]),
-                    R.num(m["Win Rate %"], 2, "%"), R.num(m["Profit Factor"]), R.inr(m["Avg P&L / Trade"]),
-                    (R.inr(m["Max Drawdown"]), "bad"), (R.num(m["Return / MDD"]), "hl")]
-                   + ([(R.num(core.capital_metrics(m, cap)["ROI %"], 2, "%"), "hl")] if cap else []))
-st.html(R.wrap(R.h2(3, f"Regime Analysis - split at {R.dt(split)}")
-               + "<p>The horizon is split at the date chosen in the sidebar to check whether the edge persists in the later period. "
-                 "A strategy that keeps its numbers after the split is more credible than one whose edge sits entirely before it.</p>"
-               + R.table(["Series / period", "Net P&L", "Trades", "Win rate", "Profit factor", "Avg / trade", "Max DD", "Return / MDD"]
-                         + (["ROI"] if cap else []), reg)))
+if show["Regime"]:
+    reg = []
+    for n in names:
+        post = SER[n][SER[n]["Exit DateTime"] >= split]
+        for tag, s in (("full period", SER[n]), (f"from {R.dt(split)}", post)):
+            if s.empty:
+                continue
+            m = core.metrics(s)
+            reg.append([f'{n}<span class="tag">{tag}</span>', (R.inr(m["Net P&L"]), R.sgn(m["Net P&L"])), str(m["Total Trades"]),
+                        R.num(m["Win Rate %"], 2, "%"), R.num(m["Profit Factor"]), R.inr(m["Avg P&L / Trade"]),
+                        (R.inr(m["Max Drawdown"]), "bad"), (R.num(m["Return / MDD"]), "hl")]
+                       + ([(R.num(core.capital_metrics(m, cap)["ROI %"], 2, "%"), "hl")] if cap else []))
+    st.html(R.wrap(R.h2(3, f"Regime Analysis - split at {R.dt(split)}")
+                   + "<p>The horizon is split at the date chosen in the sidebar to check whether the edge persists in the later period. "
+                     "A strategy that keeps its numbers after the split is more credible than one whose edge sits entirely before it.</p>"
+                   + R.table(["Series / period", "Net P&L", "Trades", "Win rate", "Profit factor", "Avg / trade", "Max DD", "Return / MDD"]
+                             + (["ROI"] if cap else []), reg)))
 
 # 4 -------------------------------------------------------------------------------------
-st.html(R.wrap(R.h2(4, "Strategy Deep-Dive")))
-for tab, n in zip(st.tabs(names), names):
-    with tab:
-        s, m = SER[n], M[n]
-        mat, yearly = core.monthly_matrix(s)
-        roll = core.rolling_returns(s, tuple(roll_m)).astype({"Months": int, "Windows": int})
-        kv = R.table(["Metric", n], spec_rows([m]))
-        yrows = [[str(int(r["Year"])), (R.inr(r["Net P&L"]), R.sgn(r["Net P&L"])), str(int(r["Trades"])),
-                  R.num(r["Win Rate %"], 2, "%"), R.num(r["Profit Factor"]), R.inr(r["Avg P&L / Trade"]),
-                  (R.inr(r["Max Drawdown"]) + R.pct_of(r["Max Drawdown"], cap), "bad"),
-                  (R.num(r["Net P&L"] / cap * 100, 2, "%") if cap else "n/a", "hl")] for _, r in yearly.iterrows()]
-        rrows = [[("1 Month" if int(r.Months) == 1 else f"{int(r.Months)} Months" if r.Months < 12 else f"{int(r.Months) // 12} Year" + ("s" if r.Months > 12 else "")),
-                  str(int(r.Windows)), (R.inr(r.Worst) + R.pct_of(r.Worst, cap), R.sgn(r.Worst)),
-                  (R.inr(r.Median) + R.pct_of(r.Median, cap), R.sgn(r.Median)),
-                  (R.inr(r.Average) + R.pct_of(r.Average, cap), R.sgn(r.Average)), (R.inr(r.Best) + R.pct_of(r.Best, cap), "good"),
-                  (R.num(r["Positive %"], 1, "%"), "good" if r["Positive %"] == 100 else "hl" if r["Positive %"] >= 90 else "")]
-                 for _, r in roll.iterrows()]
-        take = ""
-        if len(roll):
-            clean = roll[(roll["Positive %"] == 100) & (roll.Windows >= 5)]
-            if len(clean):
-                c = clean.iloc[0]
-                take = (f'Every {int(c.Months)}-month window in this sample closed positive ({int(c.Windows)} overlapping windows). '
-                        f'The worst {int(roll.iloc[0].Months)}-month window lost {R.inr(-roll.iloc[0].Worst) if roll.iloc[0].Worst < 0 else "nothing"}.')
-            else:
-                b = roll.loc[roll["Positive %"].idxmax()]
-                take = (f'No holding period tested was uniformly positive; the best is {int(b.Months)}-month at {b["Positive %"]:.1f}% '
-                        f'of windows in profit, worst case {R.inr(b.Worst)}.')
-        st.html(R.wrap(f"<h3>4.{names.index(n) + 1}.1 Performance metrics</h3>" + kv
-                       + "<h3>Monthly net P&amp;L (by exit month)</h3>" + R.heatmap(mat, yearly, m["Max Drawdown"], cap)
-                       + "<h3>Yearly breakdown</h3>"
-                       + R.table(["Year", "Net P&L", "Trades", "Win rate", "Profit factor", "Avg / trade", "Max DD", "ROI"], yrows)
-                       + "<h3>Rolling return validation</h3><p>Each window is a real calendar period anchored on every trade, "
-                         "counted only where the full period fits inside the data.</p>"
-                       + (R.table(["Holding period", "Windows", "Worst", "Median", "Average", "Best", "Positive"], rrows)
-                          if rrows else "<p>The sample is shorter than every selected window.</p>")))
-        a, b = st.columns(2)
-        with a:
-            f = go.Figure(go.Bar(x=yearly["Year"].astype(str), y=yearly["Net P&L"],
-                                 marker_color=[R.POS if x > 0 else R.NEG for x in yearly["Net P&L"]]))
-            chart(f, "Net P&L by calendar year (₹)", 300)
-        with b:
+if show["Deep-Dive"]:
+    st.html(R.wrap(R.h2(4, "Strategy Deep-Dive")))
+    for tab, n in zip(st.tabs(names), names):
+        with tab:
+            s, m = SER[n], M[n]
+            mat, yearly = core.monthly_matrix(s)
+            roll = core.rolling_returns(s, tuple(roll_m)).astype({"Months": int, "Windows": int})
+            kv = R.table(["Metric", n], spec_rows([m]))
+            yrows = [[str(int(r["Year"])), (R.inr(r["Net P&L"]), R.sgn(r["Net P&L"])), str(int(r["Trades"])),
+                      R.num(r["Win Rate %"], 2, "%"), R.num(r["Profit Factor"]), R.inr(r["Avg P&L / Trade"]),
+                      (R.inr(r["Max Drawdown"]) + R.pct_of(r["Max Drawdown"], cap), "bad"),
+                      (R.num(r["Net P&L"] / cap * 100, 2, "%") if cap else "n/a", "hl")] for _, r in yearly.iterrows()]
+            rrows = [[("1 Month" if int(r.Months) == 1 else f"{int(r.Months)} Months" if r.Months < 12 else f"{int(r.Months) // 12} Year" + ("s" if r.Months > 12 else "")),
+                      str(int(r.Windows)), (R.inr(r.Worst) + R.pct_of(r.Worst, cap), R.sgn(r.Worst)),
+                      (R.inr(r.Median) + R.pct_of(r.Median, cap), R.sgn(r.Median)),
+                      (R.inr(r.Average) + R.pct_of(r.Average, cap), R.sgn(r.Average)), (R.inr(r.Best) + R.pct_of(r.Best, cap), "good"),
+                      (R.num(r["Positive %"], 1, "%"), "good" if r["Positive %"] == 100 else "hl" if r["Positive %"] >= 90 else "")]
+                     for _, r in roll.iterrows()]
+            take = ""
             if len(roll):
-                lbl = roll.Months.astype(str) + "m"
-                f = go.Figure()
-                for col, c in (("Worst", R.NEG), ("Average", R.NAVY), ("Best", R.POS)):
-                    f.add_bar(x=lbl, y=roll[col], name=col, marker_color=c)
-                chart(f, "Rolling windows - worst / average / best (₹)", 300)
-        if take:
-            st.html(R.wrap(f'<div class="callout"><b>Holding-period takeaway:</b> {take}</div>'))
+                clean = roll[(roll["Positive %"] == 100) & (roll.Windows >= 5)]
+                if len(clean):
+                    c = clean.iloc[0]
+                    take = (f'Every {int(c.Months)}-month window in this sample closed positive ({int(c.Windows)} overlapping windows). '
+                            f'The worst {int(roll.iloc[0].Months)}-month window lost {R.inr(-roll.iloc[0].Worst) if roll.iloc[0].Worst < 0 else "nothing"}.')
+                else:
+                    b = roll.loc[roll["Positive %"].idxmax()]
+                    take = (f'No holding period tested was uniformly positive; the best is {int(b.Months)}-month at {b["Positive %"]:.1f}% '
+                            f'of windows in profit, worst case {R.inr(b.Worst)}.')
+            st.html(R.wrap(f"<h3>4.{names.index(n) + 1}.1 Performance metrics</h3>" + kv
+                           + "<h3>Monthly net P&amp;L (by exit month)</h3>" + R.heatmap(mat, yearly, m["Max Drawdown"], cap)
+                           + "<h3>Yearly breakdown</h3>"
+                           + R.table(["Year", "Net P&L", "Trades", "Win rate", "Profit factor", "Avg / trade", "Max DD", "ROI"], yrows)
+                           + "<h3>Rolling return validation</h3><p>Each window is a real calendar period anchored on every trade, "
+                             "counted only where the full period fits inside the data.</p>"
+                           + (R.table(["Holding period", "Windows", "Worst", "Median", "Average", "Best", "Positive"], rrows)
+                              if rrows else "<p>The sample is shorter than every selected window.</p>")))
+            a, b = st.columns(2)
+            with a:
+                f = go.Figure(go.Bar(x=yearly["Year"].astype(str), y=yearly["Net P&L"],
+                                     marker_color=[R.POS if x > 0 else R.NEG for x in yearly["Net P&L"]]))
+                chart(f, "Net P&L by calendar year (₹)", 300)
+            with b:
+                if len(roll):
+                    lbl = roll.Months.astype(str) + "m"
+                    f = go.Figure()
+                    for col, c in (("Worst", R.NEG), ("Average", R.NAVY), ("Best", R.POS)):
+                        f.add_bar(x=lbl, y=roll[col], name=col, marker_color=c)
+                    chart(f, "Rolling windows - worst / average / best (₹)", 300)
+            if take:
+                st.html(R.wrap(f'<div class="callout"><b>Holding-period takeaway:</b> {take}</div>'))
 
 # 5 -------------------------------------------------------------------------------------
-risk = [[n, (R.inr(M[n]["Max Drawdown"]) + R.pct_of(M[n]["Max Drawdown"], cap), "bad"), (R.inr(M[n]["Largest Loss"]), "bad"),
-         str(M[n]["Max Loss Streak"]), (R.inr(M[n]["Annualised P&L"]), R.sgn(M[n]["Annualised P&L"])), (R.num(M[n]["Return / MDD"]), "hl")]
-        + ([(R.num(CM[n]["Annualised ROI %"], 2, "%"), "hl")] if cap else [])
-        for n in names]
-st.html(R.wrap(R.h2(5, "Risk & Capital Efficiency")
-               + R.table(["Series", "Max drawdown", "Worst trade", "Longest losing run", "Annualised P&L", "Return / MDD"]
-                         + (["Annualised ROI"] if cap else []), risk)
-               + ('' if cap else '<p class="cap">Enter capital / margin in the sidebar to add % of capital and ROI figures. '
-                                 'No capital is assumed.</p>')))
+if show["Risk & Capital"]:
+    risk = [[n, (R.inr(M[n]["Max Drawdown"]) + R.pct_of(M[n]["Max Drawdown"], cap), "bad"), (R.inr(M[n]["Largest Loss"]), "bad"),
+             str(M[n]["Max Loss Streak"]), (R.inr(M[n]["Annualised P&L"]), R.sgn(M[n]["Annualised P&L"])), (R.num(M[n]["Return / MDD"]), "hl")]
+            + ([(R.num(CM[n]["Annualised ROI %"], 2, "%"), "hl")] if cap else [])
+            for n in names]
+    st.html(R.wrap(R.h2(5, "Risk & Capital Efficiency")
+                   + R.table(["Series", "Max drawdown", "Worst trade", "Longest losing run", "Annualised P&L", "Return / MDD"]
+                             + (["Annualised ROI"] if cap else []), risk)
+                   + ('' if cap else '<p class="cap">Enter capital / margin in the sidebar to add % of capital and ROI figures. '
+                                     'No capital is assumed.</p>')))
 
 # 6 -------------------------------------------------------------------------------------
-st.html(R.wrap(R.h2(6, "Trade Distribution & Activity")))
-a, b, c = st.columns([2, 2, 1.4])
-with a:
-    f = go.Figure()
-    for n in names[1:] or names:
-        f.add_histogram(x=SER[n]["P/L"], name=n, marker_color=COLORS[n], opacity=.8, nbinsx=40)
-    f.update_layout(barmode="overlay")
-    chart(f, "Trade P&L distribution (₹)", 320)
-with b:
-    act = v.groupby([v["Entry DateTime"].dt.to_period("M").astype(str), "Direction"]).size().unstack(fill_value=0)
-    f = go.Figure()
-    for d in act.columns:
-        f.add_bar(x=act.index, y=act[d], name=d, marker_color=COLORS[d])
-    f.update_layout(barmode="stack")
-    chart(f, "Monthly trade activity (by entry)", 320)
-with c:
-    f = go.Figure(go.Pie(labels=["Winning", "Losing", "Breakeven"], hole=.55, sort=False,
-                         values=[mc["Winning Trades"], mc["Losing Trades"], mc["Breakeven Trades"]],
-                         marker_colors=[R.POS, R.NEG, "#9AA5B1"]))
-    chart(f, "Win vs loss", 320)
+if show["Distribution"]:
+    st.html(R.wrap(R.h2(6, "Trade Distribution & Activity")))
+    a, b, c = st.columns([2, 2, 1.4])
+    with a:
+        f = go.Figure()
+        for n in names[1:] or names:
+            f.add_histogram(x=SER[n]["P/L"], name=n, marker_color=COLORS[n], opacity=.8, nbinsx=40)
+        f.update_layout(barmode="overlay")
+        chart(f, "Trade P&L distribution (₹)", 320)
+    with b:
+        act = v.groupby([v["Entry DateTime"].dt.to_period("M").astype(str), "Direction"]).size().unstack(fill_value=0)
+        f = go.Figure()
+        for d in act.columns:
+            f.add_bar(x=act.index, y=act[d], name=d, marker_color=COLORS[d])
+        f.update_layout(barmode="stack")
+        chart(f, "Monthly trade activity (by entry)", 320)
+    with c:
+        f = go.Figure(go.Pie(labels=["Winning", "Losing", "Breakeven"], hole=.55, sort=False,
+                             values=[mc["Winning Trades"], mc["Losing Trades"], mc["Breakeven Trades"]],
+                             marker_colors=[R.POS, R.NEG, "#9AA5B1"]))
+        chart(f, "Win vs loss", 320)
 
 # 7 -------------------------------------------------------------------------------------
-st.html(R.wrap(R.h2(7, "Trade Ledger & Exports")))
-q = st.text_input("Search (any column)")
 lead = ["Trade #", "Direction", "Entry DateTime", "Exit DateTime", "Duration (min)", "P/L"]
 cols = lead + [c for c in v.columns if c not in lead + ["Entry Date", "Entry Time", "Exit Date", "Exit Time"]]
-tabs = ["All", "Long", "Short", "Winning", "Losing"]
-subsets = [v, v[v.Direction == "Long"], v[v.Direction == "Short"], v[v["P/L"] > 0], v[v["P/L"] < 0]]
-for tab, name, s in zip(st.tabs(tabs), tabs, subsets):
-    with tab:
-        s = s[cols].copy()
-        if "Index" in s:
-            s["Index"] = s["Index"].map(lambda x: f"{x:g}" if isinstance(x, float) else str(x))
-        if q:
-            s = s[s.astype(str).apply(lambda c: c.str.contains(q, case=False, regex=False)).any(axis=1)]
-        st.caption(f"{len(s):,} trades")
-        st.dataframe(s.style.map(lambda x: f"color: {R.POS if x > 0 else R.NEG if x < 0 else 'inherit'}; font-weight:600", subset=["P/L"])
-                     .format({"P/L": "{:,.2f}", "Duration (min)": "{:.0f}"}), hide_index=True, height=380,
-                     column_config={"Entry DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm"),
-                                    "Exit DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm")})
-        x1, x2 = st.columns([1, 6])
-        x1.download_button("Excel", core.to_xlsx(s), f"{name} trades.xlsx", key=f"x{name}")
-        x2.download_button("CSV", core.to_csv(s), f"{name} trades.csv", "text/csv", key=f"c{name}")
+if show["Trade Ledger"]:
+    st.html(R.wrap(R.h2(7, "Trade Ledger & Exports")))
+    q = st.text_input("Search (any column)")
+    tabs = ["All", "Long", "Short", "Winning", "Losing"]
+    subsets = [v, v[v.Direction == "Long"], v[v.Direction == "Short"], v[v["P/L"] > 0], v[v["P/L"] < 0]]
+    for tab, name, s in zip(st.tabs(tabs), tabs, subsets):
+        with tab:
+            s = s[cols].copy()
+            if "Index" in s:
+                s["Index"] = s["Index"].map(lambda x: f"{x:g}" if isinstance(x, float) else str(x))
+            if q:
+                s = s[s.astype(str).apply(lambda c: c.str.contains(q, case=False, regex=False)).any(axis=1)]
+            st.caption(f"{len(s):,} trades")
+            st.dataframe(s.style.map(lambda x: f"color: {R.POS if x > 0 else R.NEG if x < 0 else 'inherit'}; font-weight:600", subset=["P/L"])
+                         .format({"P/L": "{:,.2f}", "Duration (min)": "{:.0f}"}), hide_index=True, height=380,
+                         column_config={"Entry DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm"),
+                                        "Exit DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm")})
+            x1, x2 = st.columns([1, 6])
+            x1.download_button("Excel", core.to_xlsx(s), f"{name} trades.xlsx", key=f"x{name}")
+            x2.download_button("CSV", core.to_csv(s), f"{name} trades.csv", "text/csv", key=f"c{name}")
 
+# full report export - always available, even if the on-screen ledger above is hidden
 ledger = v[cols].copy()
 if "Index" in ledger:
     ledger["Index"] = ledger["Index"].map(lambda x: f"{x:g}" if isinstance(x, float) else str(x))
@@ -356,11 +384,12 @@ st.download_button("Download full report (Excel)", report_xlsx, "Backtest Report
 sb.download_button("Download full report (Excel)", report_xlsx, "Backtest Report.xlsx", type="primary", key="xfull_sb")
 
 # 8 -------------------------------------------------------------------------------------
-st.html(R.wrap(R.h2(8, "Conclusion")
-               + f"<p>The combined book produced {R.inr(mc['Net P&L'])} over {mc['Total Trades']:,} trades at a "
-                 f"{R.num(mc['Win Rate %'], 2, '%')} win rate and {R.num(mc['Profit Factor'])} profit factor, with a worst closed-trade "
-                 f"drawdown of {R.inr(mc['Max Drawdown'])}. "
-               + (f"Long and Short contributed {R.inr(M['Long']['Net P&L'])} and {R.inr(M['Short']['Net P&L'])} respectively. " if len(names) == 3 else "")
-               + "</p><p class=\"cap\">Backtested results are hypothetical and do not guarantee future performance. Figures use the P/L in the "
-                 "AlgoTest files (including whatever slippage the backtest applied) and exclude any costs not in those files. "
-                 "Save as PDF with your browser's Print (Ctrl+P, background graphics on).</p>"))
+if show["Conclusion"]:
+    st.html(R.wrap(R.h2(8, "Conclusion")
+                   + f"<p>The combined book produced {R.inr(mc['Net P&L'])} over {mc['Total Trades']:,} trades at a "
+                     f"{R.num(mc['Win Rate %'], 2, '%')} win rate and {R.num(mc['Profit Factor'])} profit factor, with a worst closed-trade "
+                     f"drawdown of {R.inr(mc['Max Drawdown'])}. "
+                   + (f"Long and Short contributed {R.inr(M['Long']['Net P&L'])} and {R.inr(M['Short']['Net P&L'])} respectively. " if len(names) == 3 else "")
+                   + "</p><p class=\"cap\">Backtested results are hypothetical and do not guarantee future performance. Figures use the P/L in the "
+                     "AlgoTest files (including whatever slippage the backtest applied) and exclude any costs not in those files. "
+                     "Save as PDF with your browser's Print (Ctrl+P, background graphics on).</p>"))

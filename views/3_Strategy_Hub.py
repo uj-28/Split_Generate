@@ -16,7 +16,7 @@ st.set_page_config(page_title="Strategy Analytics Hub", layout="wide", page_icon
 st.html(hub.CSS)
 
 
-def chart(fig, title, h=320):
+def chart(fig, title, h=360):
     fig.update_layout(title=dict(text=title, x=0, font=dict(size=14, color=hub.TEXT)), height=h, **hub.PLOTLY_DARK)
     st.plotly_chart(fig, width="stretch")
 
@@ -41,8 +41,9 @@ with st.expander("Which files can I upload?"):
         ["AlgoTest (detailed)", "Entry-Date, Instrument-Kind, StrikePrice, Position, ExitDate, ExpiryDate, Remarks …",
          "Same, plus expiry date and the exit remark"],
         ["StockMock (.xlsx)", "A basket workbook with a 'Basket Strategies' sheet and one '# S-n - Result' sheet per strategy",
-         "One row per expiry cycle, from every enabled (Run=True) strategy. No per-leg strike/price or entry "
-         "time is available at this level, so those columns are blank and Duration is left out rather than guessed"],
+         "One row per expiry cycle, from every enabled (Run=True) strategy, matched exactly against StockMock's own "
+         "Overall Profit / Win% figures. No per-leg strike/price or entry time is available at this level, so those "
+         "columns are blank and Duration is left out rather than guessed"],
         ["A previous report from this app", "Any 'Download full report (Excel)' this app has given you before (Backtest "
          "Report or an earlier Strategy Hub export)", "Its 'Trades' sheet is re-imported directly, so you can merge an "
          "older report back in alongside new files"],
@@ -50,19 +51,14 @@ with st.expander("Which files can I upload?"):
 
 up = st.file_uploader("Drop trade report files here, or browse", type=["csv", "xlsx"], accept_multiple_files=True)
 cache = st.session_state.get("hub_cache")
-c1, c2 = st.columns(2)
-capital = c1.number_input("Initial Capital (₹)", min_value=0.0, step=10000.0, format="%.0f", key="hub_capital",
-                          value=(cache or {}).get("capital", 200000.0))
-charges = c2.number_input("Total Charges (₹)", min_value=0.0, step=100.0, format="%.0f", key="hub_charges",
-                          value=(cache or {}).get("charges", 0.0),
-                          help="Spread evenly across every merged trade (the source files carry no per-trade charge).")
 
 # ====================== per-file parsing (new upload), or the last successful run from this session ======================
 if up:
-    frames, chips, errors, notes = [], [], [], []
+    frames, chips, errors, notes, margins = [], [], [], [], []
     for f in up:
         try:
-            t, rej, warn, kind = core.detect_and_load(f.getvalue(), f.name)
+            raw = f.getvalue()
+            t, rej, warn, kind = core.detect_and_load(raw, f.name)
             t = t.rename(columns={"Direction": "Source"})
             t["Source"] = f.name
         except Exception as e:  # one bad file must never take down the whole page
@@ -71,23 +67,29 @@ if up:
             continue
         frames.append(t)
         chips.append(hub.chip(f.name, kind, len(t)))
+        if kind == "StockMock":
+            mg = core.extract_stockmock_margin(raw)
+            if mg:
+                margins.append((f.name, mg))
         if len(rej):
             notes.append(f"{f.name}: {len(rej)} row(s) rejected - {'; '.join(rej['Reason'].unique()[:3])}")
         notes += [f"{f.name}: {w}" for w in warn]
+    names = [f.name for f in up]
     if frames:  # keep the last successful parse in memory - switching pages or closing the uploader won't lose it
         st.session_state["hub_cache"] = {"frames": frames, "chips": chips, "errors": errors, "notes": notes,
-                                         "names": [f.name for f in up], "capital": capital, "charges": charges}
+                                         "names": names, "margins": margins}
     cache = st.session_state.get("hub_cache") if frames else None
 elif cache:
     frames, chips, errors, notes = cache["frames"], cache["chips"], cache["errors"], cache["notes"]
+    margins, names = cache.get("margins", []), cache["names"]
     b1, b2 = st.columns([5, 1])
     b1.html(hub.wrap(f'<div class="ok">Showing the last report generated in this session '
-                     f'({", ".join(cache["names"])}) - drop new files above to replace it.</div>'))
+                     f'({", ".join(names)}) - drop new files above to replace it.</div>'))
     if b2.button("Clear", width="stretch"):
         del st.session_state["hub_cache"]
         st.rerun()
 else:
-    frames, chips, errors, notes = [], [], [], []
+    frames, chips, errors, notes, margins, names = [], [], [], [], [], []
 
 if not frames:
     st.html(hub.wrap('<div class="empty"><b>Upload your trade reports to build the dashboard</b>'
@@ -97,6 +99,24 @@ if not frames:
                      '④ Get one merged equity curve, KPI set and trade log</div></div>'))
     st.stop()
 
+# ====================== capital / charges (margin detected from StockMock files, if any) ======================
+sm_margin = sum(v for _, v in margins) if margins else None
+c1, c2, c3 = st.columns([1.3, 1, 1.7])
+use_margin = c1.checkbox(f"Use StockMock's own margin ({R.inr(sm_margin)})" if sm_margin else "Use StockMock's own margin",
+                         value=bool(sm_margin), disabled=not sm_margin,
+                         help="StockMock prints its own basket margin in the file (Basket Strategies sheet) - "
+                             "tick to use that as capital instead of the figure typed below." if sm_margin else
+                             "No StockMock file with a readable margin is in this upload.")
+manual_capital = c2.number_input("Initial Capital (₹)", min_value=0.0, step=10000.0, format="%.0f", key="hub_capital",
+                                 value=(cache or {}).get("capital", 200000.0), disabled=use_margin and bool(sm_margin),
+                                 help="Ignored while 'Use StockMock's own margin' is ticked." if sm_margin else None)
+capital = sm_margin if (use_margin and sm_margin) else manual_capital
+charges = c3.number_input("Total Charges (₹)", min_value=0.0, step=100.0, format="%.0f", key="hub_charges",
+                          value=(cache or {}).get("charges", 0.0),
+                          help="Spread evenly across every merged trade (the source files carry no per-trade charge).")
+if cache is not None:
+    cache["capital"], cache["charges"] = manual_capital, charges
+
 st.html(hub.wrap('<div class="filebar">' + "".join(chips) + "</div>"
                  + "".join(f'<div class="bad">{e}</div>' for e in errors)
                  + "".join(f'<div class="warn">{n}</div>' for n in notes)))
@@ -105,93 +125,130 @@ m = core.hub_merge(frames, capital, charges)
 mm = core.hub_metrics(m, capital)
 eq = core.hub_equity(m, capital)
 mat, yearly = core.hub_monthly_matrix(m, capital)
+daily = core.daily_pnl(m)
+
+# ====================== section visibility ======================
+st.html(hub.wrap(hub.h2("Report sections")))
+t1, t2, t3, t4, t5 = st.columns(5)
+show_kpi = t1.checkbox("KPIs", True)
+show_charts = t2.checkbox("Charts", True)
+show_matrix = t3.checkbox("Monthly / Yearly", True)
+show_daily = t4.checkbox("Day-wise", True)
+show_log = t5.checkbox("Trade log", True)
 
 # ====================== KPI row ======================
-roi = f'Return: {mm["ROI %"]:.2f}% on {R.inr(capital)}' if mm["ROI %"] is not None else f'Capital: {R.inr(capital)}'
-dd_sub = f'{mm["Max Drawdown % of Capital"]:.2f}% of Initial Capital' if mm["Max Drawdown % of Capital"] is not None else "Peak to trough"
-st.html(hub.wrap(hub.kpis([
-    ("Net P&L", R.inr(mm["Net P&L"]), roi, R.sgn(mm["Net P&L"]), hub.POS if mm["Net P&L"] >= 0 else hub.NEG),
-    ("Win Rate", R.num(mm["Win Rate %"], 1, "%"), f'Wins: {mm["Winning Trades"]} | Losses: {mm["Losing Trades"]}', "", hub.ACCENT),
-    ("Profit Factor", R.num(mm["Profit Factor"]), f'Gross: {R.inr(mm["Gross Profit"])}', "", hub.ACCENT2),
-    ("Max Drawdown", R.inr(-mm["Max Drawdown"]) if mm["Max Drawdown"] else "n/a", dd_sub, "neg", hub.NEG),
-    ("Avg Trade P&L", R.inr(mm["Avg P&L / Trade"]), f'Total Trades: {mm["Total Trades"]:,}',
-     R.sgn(mm["Avg P&L / Trade"]), hub.ACCENT),
-])))
+if show_kpi:
+    roi = f'Return: {mm["ROI %"]:.2f}% on {R.inr(capital)}' if mm["ROI %"] is not None else f'Capital: {R.inr(capital)}'
+    dd_sub = f'{mm["Max Drawdown % of Capital"]:.2f}% of Initial Capital' if mm["Max Drawdown % of Capital"] is not None else "Peak to trough"
+    st.html(hub.wrap(hub.kpis([
+        ("Net P&L", R.inr(mm["Net P&L"]), roi, R.sgn(mm["Net P&L"]), hub.POS if mm["Net P&L"] >= 0 else hub.NEG),
+        ("Win Rate", R.num(mm["Win Rate %"], 1, "%"), f'Wins: {mm["Winning Trades"]} | Losses: {mm["Losing Trades"]}', "", hub.ACCENT),
+        ("Profit Factor", R.num(mm["Profit Factor"]), f'Gross: {R.inr(mm["Gross Profit"])}', "", hub.ACCENT2),
+        ("Max Drawdown", R.inr(-mm["Max Drawdown"]) if mm["Max Drawdown"] else "n/a", dd_sub, "neg", hub.NEG),
+        ("Avg Trade P&L", R.inr(mm["Avg P&L / Trade"]), f'Total Trades: {mm["Total Trades"]:,}',
+         R.sgn(mm["Avg P&L / Trade"]), hub.ACCENT),
+    ])))
 
 # ====================== charts ======================
-st.html(hub.wrap(hub.h2("Combined Cumulative Equity Curve")))
-a, b = st.columns(2)
-with a:
-    f = go.Figure(go.Scatter(x=eq["Exit DateTime"], y=eq["Equity"], mode="lines", line=dict(color=hub.ACCENT, width=2.2),
-                             fill="tozeroy", fillcolor="rgba(76,141,255,.10)"))
-    chart(f, "Combined Cumulative Equity Curve (₹)", 330)
-with b:
-    f = go.Figure(go.Bar(x=yearly["Year"].astype(str), y=yearly["Net P&L"],
-                         marker_color=[hub.POS if x > 0 else hub.NEG for x in yearly["Net P&L"]]))
-    chart(f, "Yearly Returns Breakdown (₹)", 330)
+if show_charts:
+    st.html(hub.wrap(hub.h2("Combined Cumulative Equity Curve")))
+    with st.container(border=True):
+        f = go.Figure(go.Scatter(x=eq["Exit DateTime"], y=eq["Equity"], mode="lines", line=dict(color=hub.ACCENT, width=2.4),
+                                 fill="tozeroy", fillcolor="rgba(76,141,255,.12)"))
+        chart(f, "Combined Cumulative Equity Curve (₹)", 440)
+    with st.container(border=True):
+        f = go.Figure(go.Scatter(x=eq["Exit DateTime"], y=-eq["Drawdown %"], mode="lines", line=dict(color=hub.NEG, width=1.8),
+                                 fill="tozeroy", fillcolor="rgba(251,91,91,.16)"))
+        f.update_yaxes(ticksuffix="%")
+        chart(f, "Underwater Drawdown Curve (%)", 320)
 
-a, b = st.columns(2)
-with a:
-    f = go.Figure(go.Scatter(x=eq["Exit DateTime"], y=-eq["Drawdown %"], mode="lines", line=dict(color=hub.NEG, width=1.6),
-                             fill="tozeroy", fillcolor="rgba(251,91,91,.14)"))
-    f.update_yaxes(ticksuffix="%")
-    chart(f, "Underwater Drawdown Curve (%)", 300)
-with b:
-    f = go.Figure(go.Pie(labels=["Winning", "Losing", "Breakeven"], hole=.6, sort=False,
-                         values=[mm["Winning Trades"], mm["Losing Trades"], mm["Breakeven Trades"]],
-                         marker_colors=[hub.POS, hub.NEG, hub.MUTED2], textfont=dict(color=hub.TEXT)))
-    chart(f, "Winning vs Losing Trades", 300)
-st.html(hub.wrap('<p class="cap">Equity starts at Initial Capital and adds each trade\'s Net P&L in exit-time order. '
-                 'The underwater curve is the standard drawdown %: current equity below its own running peak. '
-                 '"% of Initial Capital" in the KPI card above uses a fixed denominator instead, for a quick capital-at-risk read.</p>'))
+    a, b = st.columns(2)
+    with a, st.container(border=True):
+        f = go.Figure(go.Bar(x=yearly["Year"].astype(str), y=yearly["Net P&L"],
+                             marker_color=[hub.POS if x > 0 else hub.NEG for x in yearly["Net P&L"]]))
+        chart(f, "Yearly Returns Breakdown (₹)", 340)
+    with b, st.container(border=True):
+        f = go.Figure(go.Pie(labels=["Winning", "Losing", "Breakeven"], hole=.6, sort=False,
+                             values=[mm["Winning Trades"], mm["Losing Trades"], mm["Breakeven Trades"]],
+                             marker_colors=[hub.POS, hub.NEG, hub.MUTED2], textfont=dict(color=hub.TEXT)))
+        chart(f, "Winning vs Losing Trades", 340)
+    st.html(hub.wrap('<p class="cap">Equity starts at Initial Capital and adds each trade\'s Net P&L in exit-time order. '
+                     'The underwater curve is the standard drawdown %: current equity below its own running peak. '
+                     '"% of Initial Capital" in the KPI card above uses a fixed denominator instead, for a quick capital-at-risk read.</p>'))
 
 # ====================== monthly/yearly matrix ======================
-st.html(hub.wrap(hub.h2("Monthly & Yearly Returns Performance Matrix") + hub.heatmap(mat, yearly)
-                 + '<p class="cap">₹ net P&L by exit month. Return % is each year\'s net P&L ÷ Initial Capital (not annualised, not compounded).</p>'))
+if show_matrix:
+    st.html(hub.wrap(hub.h2("Monthly & Yearly Returns Performance Matrix") + hub.heatmap(mat, yearly)
+                     + '<p class="cap">₹ net P&L by exit month. Return % is each year\'s net P&L ÷ Initial Capital (not '
+                       'annualised, not compounded). This is the same exit-date basis used for the day-wise table below, '
+                       'and matches a StockMock file\'s own day-level Overall Profit / Win% exactly.</p>'))
+
+# ====================== day-wise breakdown ======================
+if show_daily and len(daily):
+    st.html(hub.wrap(hub.h2("Day-wise Breakdown")))
+    dd = pd.to_datetime(daily["Date"])
+    years_av = sorted(dd.dt.year.unique(), reverse=True)
+    dc1, dc2 = st.columns(2)
+    dy = dc1.selectbox("Year", years_av, key="hub_day_year")
+    months_av = sorted(dd[dd.dt.year == dy].dt.month.unique())
+    dm = dc2.selectbox("Month", months_av, format_func=lambda n: pd.Timestamp(2000, n, 1).strftime("%B"),
+                       index=len(months_av) - 1, key="hub_day_month")
+    sel = daily[(dd.dt.year == dy) & (dd.dt.month == dm)].copy()
+    sel["Date"] = pd.to_datetime(sel["Date"]).dt.strftime("%a, %d %b")
+    rows = [[r["Date"], (R.inr(r["Net P&L"]), R.sgn(r["Net P&L"])), str(int(r["Trades"])), str(int(r["Wins"])), str(int(r["Losses"]))]
+            for _, r in sel.iterrows()]
+    tot = sel["Net P&L"].sum()
+    rows.append(["Month total", (R.inr(tot), R.sgn(tot)), str(int(sel.Trades.sum())), str(int(sel.Wins.sum())), str(int(sel.Losses.sum()))])
+    st.html(hub.wrap(hub.table(["Day", "Net P&L", "Trades", "Winning", "Losing"], rows)
+                     + f'<p class="cap">{len(sel)} trading day(s) in {pd.Timestamp(2000, dm, 1):%B} {dy}. '
+                       'Each day sums every trade (across every uploaded strategy/file) that exited that day - '
+                       'the same basis StockMock itself uses for its day-level Win% and Max Profit/Loss figures.</p>'))
 
 # ====================== master trade log ======================
-st.html(hub.wrap(hub.h2("Combined Master Trade Log")))
-disp = m.copy()
-disp["Strike/Type"] = disp["Strike"].map(gfmt) + disp.get("Type", "").fillna("").radd(" ")
-disp["Strike/Type"] = disp["Strike/Type"].str.strip().replace("", "—")
-disp["Index"] = disp["Index"].map(gfmt)
-for c in ("Entry Price", "Exit Price", "B/S", "Expiry", "Remarks"):
-    if c not in disp:
-        disp[c] = None
-cols = ["Index", "Source", "Entry DateTime", "Strike/Type", "Expiry", "B/S", "Entry Price", "Exit Price",
-       "Exit DateTime", "Gross P/L", "Charges", "Net P/L", "Return %", "Remarks"]
-disp = disp[cols].rename(columns={"B/S": "Position", "Net P/L": "Net P/L (₹)"})
+if show_log:
+    st.html(hub.wrap(hub.h2("Combined Master Trade Log")))
+    disp = m.copy()
+    for c in ("Strike", "Type", "Entry Price", "Exit Price", "B/S", "Expiry", "Remarks"):
+        if c not in disp:
+            disp[c] = None
+    disp["Strike/Type"] = (disp["Strike"].map(gfmt) + " " + disp["Type"].fillna("")).str.strip().replace("", "—")
+    disp["Index"] = disp["Index"].map(gfmt)
+    cols = ["Index", "Source", "Entry DateTime", "Strike/Type", "Expiry", "B/S", "Entry Price", "Exit Price",
+           "Exit DateTime", "Gross P/L", "Charges", "Net P/L", "Return %", "Remarks"]
+    disp = disp[cols].rename(columns={"B/S": "Position", "Net P/L": "Net P/L (₹)"})
 
-q = st.text_input("Search the trade log (any column)")
-sources = ["All"] + sorted(m["Source"].unique().tolist())
-tabs = st.tabs(["All", "Winning", "Losing"] + ([f"By file" ] if len(sources) > 2 else []))
-views = [disp, disp[m["Net P/L"] > 0], disp[m["Net P/L"] < 0]]
-for tab, name, s in zip(tabs, ["All", "Winning", "Losing"], views):
-    with tab:
-        if q:
-            s = s[s.astype(str).apply(lambda c: c.str.contains(q, case=False, regex=False)).any(axis=1)]
-        st.caption(f"{len(s):,} trades" + (f" (showing first 200)" if len(s) > 200 else ""))
-        st.dataframe(s.head(200).style.map(lambda x: f"color:{hub.POS}" if isinstance(x, (int, float)) and x > 0
-                                           else f"color:{hub.NEG}" if isinstance(x, (int, float)) and x < 0 else "",
-                                           subset=[c for c in ("Gross P/L", "Net P/L (₹)", "Return %") if c in s])
-                     .format({"Gross P/L": "{:,.2f}", "Charges": "{:,.2f}", "Net P/L (₹)": "{:,.2f}", "Return %": "{:,.2f}%"}),
-                     hide_index=True, height=420,
-                     column_config={"Entry DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm"),
-                                    "Exit DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm")})
-if len(sources) > 2:
-    with tabs[-1]:
-        for src in sources[1:]:
-            s = disp[m["Source"] == src]
-            st.markdown(f"**{src}** · {len(s):,} trades")
-            st.dataframe(s.head(100), hide_index=True, height=240)
+    q = st.text_input("Search the trade log (any column)")
+    sources = ["All"] + sorted(m["Source"].unique().tolist())
+    tabs = st.tabs(["All", "Winning", "Losing"] + (["By file"] if len(sources) > 2 else []))
+    views = [disp, disp[m["Net P/L"] > 0], disp[m["Net P/L"] < 0]]
+    for tab, name, s in zip(tabs, ["All", "Winning", "Losing"], views):
+        with tab:
+            if q:
+                s = s[s.astype(str).apply(lambda c: c.str.contains(q, case=False, regex=False)).any(axis=1)]
+            st.caption(f"{len(s):,} trades" + (" (showing first 200)" if len(s) > 200 else ""))
+            st.dataframe(s.head(200).style.map(lambda x: f"color:{hub.POS}" if isinstance(x, (int, float)) and x > 0
+                                               else f"color:{hub.NEG}" if isinstance(x, (int, float)) and x < 0 else "",
+                                               subset=[c for c in ("Gross P/L", "Net P/L (₹)", "Return %") if c in s])
+                         .format({"Gross P/L": "{:,.2f}", "Charges": "{:,.2f}", "Net P/L (₹)": "{:,.2f}", "Return %": "{:,.2f}%"}),
+                         hide_index=True, height=420,
+                         column_config={"Entry DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm"),
+                                        "Exit DateTime": st.column_config.DatetimeColumn(format="DD MMM YYYY, HH:mm")})
+    if len(sources) > 2:
+        with tabs[-1]:
+            for src in sources[1:]:
+                s = disp[m["Source"] == src]
+                st.markdown(f"**{src}** · {len(s):,} trades")
+                st.dataframe(s.head(100), hide_index=True, height=240)
 
-x1, x2 = st.columns([1, 6])
-x1.download_button("Download CSV", core.to_csv(disp), "strategy hub trades.csv", "text/csv")
+    x1, x2 = st.columns([1, 6])
+    x1.download_button("Download CSV", core.to_csv(disp), "strategy hub trades.csv", "text/csv")
+else:
+    x2 = st
 
 # ====================== full Excel report ======================
 info = [
-    ("Files merged", ", ".join(f.name for f in up)),
-    ("Initial capital", R.inr(capital)),
+    ("Files merged", ", ".join(names)),
+    ("Initial capital", R.inr(capital) + (" (StockMock's own margin)" if use_margin and sm_margin else "")),
     ("Total charges", R.inr(charges) + " (spread evenly across every trade)"),
     ("Trade definition", "AlgoTest: one parent trade row (P/L = file P/L). StockMock: one expiry cycle per enabled strategy."),
     ("Net P/L", "Gross P/L (file) minus this trade's share of Total Charges"),

@@ -239,3 +239,45 @@ def test_hub_detect_and_load_never_leaks_a_raw_exception(monkeypatch):
     monkeypatch.setattr(core, "load_algotest", boom)
     with pytest.raises(ValueError, match="unexpected AttributeError"):
         core.detect_and_load(algotest_detailed_csv(2).to_csv(index=False).encode("utf-8-sig"), "a.csv")
+
+
+def test_hub_stockmock_only_trade_log_has_no_strike_column():
+    """Regression: a StockMock-only upload has no 'Strike'/'Type' column at all (AlgoTest's
+    leg-join never runs), and the trade log page crashed with KeyError on disp["Strike"].
+    The page now creates these columns defensively before building Strike/Type - replicate
+    that same guard here against core's raw output."""
+    t, _, _, _ = core.detect_and_load(stockmock_workbook(), "basket.xlsx")
+    assert "Strike" not in t.columns and "Type" not in t.columns
+    m = core.hub_merge([t], capital=100000, charges=0)
+    disp = m.copy()
+    for c in ("Strike", "Type", "Entry Price", "Exit Price", "B/S", "Expiry", "Remarks"):
+        if c not in disp:
+            disp[c] = None
+    disp["Strike/Type"] = (disp["Strike"].map(lambda x: "" if pd.isna(x) else str(x)) + " "
+                           + disp["Type"].fillna("")).str.strip().replace("", "—")
+    assert (disp["Strike/Type"] == "—").all()
+
+
+def test_stockmock_margin_and_daily_pnl_match_stockmocks_own_figures():
+    """A StockMock workbook can print its own basket-level 'Estimated Margin' in the
+    'Basket Strategies' sheet - extract it exactly, and verify daily_pnl() groups trades the
+    same way StockMock itself does for its day-level Win% figures (used for the day-wise
+    breakdown table and to let users cross-check a Hub import against the source file)."""
+    wb = stockmock_workbook()
+    assert core.extract_stockmock_margin(wb) is None  # the minimal test fixture has no RESULT block
+
+    import openpyxl
+    book = openpyxl.load_workbook(io.BytesIO(wb))
+    bs = book["Basket Strategies"]
+    bs.append(["Estimated Margin (On tue)", None, None, "Rs 5.25L"])
+    buf = io.BytesIO()
+    book.save(buf)
+    assert core.extract_stockmock_margin(buf.getvalue()) == pytest.approx(525000.0)
+    assert core._parse_margin("2.66Cr") == pytest.approx(26600000.0)
+    assert core._parse_margin("99,707") == pytest.approx(99707.0)
+    assert core._parse_margin("not a number") is None
+
+    t, _, _, _ = core.detect_and_load(wb, "basket.xlsx")
+    dp = core.daily_pnl(t)
+    assert dp["Trades"].sum() == len(t) and dp["Net P&L"].sum() == pytest.approx(t["P/L"].sum())
+    assert (dp["Wins"] + dp["Losses"] <= dp["Trades"]).all()

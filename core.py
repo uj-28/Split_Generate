@@ -637,6 +637,50 @@ def load_stockmock(file_bytes, name):
     return t, rejected.reset_index(drop=True), warnings
 
 
+def _parse_margin(v):
+    """'Rs 21.64L' / '21.64L' / '2.66Cr' / '99,707' -> rupees. None if unparseable."""
+    if v is None:
+        return None
+    s = re.sub(r"rs\.?|,", "", str(v), flags=re.I).strip()
+    m = re.match(r"^(-?\d+(?:\.\d+)?)\s*(l|cr)?$", s, flags=re.I)
+    if not m:
+        return None
+    n = float(m.group(1))
+    unit = (m.group(2) or "").lower()
+    return n * 1e7 if unit == "cr" else n * 1e5 if unit == "l" else n
+
+
+def extract_stockmock_margin(file_bytes):
+    """StockMock prints its own basket-level 'Estimated Margin' in the 'Basket Strategies'
+    sheet's own RESULT block - read it directly rather than estimating. None if not found,
+    never guessed."""
+    try:
+        wb = openpyxl.load_workbook(io.BytesIO(file_bytes), read_only=True, data_only=True)
+    except Exception:
+        return None
+    if "Basket Strategies" not in wb.sheetnames:
+        return None
+    for row in wb["Basket Strategies"].iter_rows(values_only=True):
+        if row and row[0] and str(row[0]).strip().lower().startswith("estimated margin"):
+            for cell in row[1:]:
+                v = _parse_margin(cell)
+                if v is not None:
+                    return v
+    return None
+
+
+def daily_pnl(t):
+    """Trades grouped by exit DATE (not datetime) - the same basis StockMock itself uses for
+    its own day-level Win%/Max Profit/Max Loss figures, so results can be checked against it
+    directly. Also the basis for a day-by-day breakdown within any one month."""
+    if t.empty:
+        return pd.DataFrame(columns=["Date", "Net P&L", "Trades", "Wins", "Losses"])
+    d = t["Exit DateTime"].dt.date
+    g = t.groupby(d)["P/L"].agg(["sum", "size", lambda s: (s > 0).sum(), lambda s: (s < 0).sum()])
+    g.columns = ["Net P&L", "Trades", "Wins", "Losses"]
+    return g.rename_axis("Date").reset_index().sort_values("Date").reset_index(drop=True)
+
+
 def is_own_report_workbook(file_bytes):
     """Quick format sniff: is this one of this app's own 'Download full report' exports
     (Backtest Report or Strategy Hub Report), re-uploaded?"""

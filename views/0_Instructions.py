@@ -29,9 +29,11 @@ st.html(R.wrap(
         ["2 · Backtest Report", "The two result files AlgoTest gave you (Long and Short)",
          "KPI cards, Long / Short / Combined comparison, cumulative P&amp;L and drawdown charts, regime split, monthly heatmap, "
          "yearly and rolling-return tables, risk summary, filterable trade ledger, Excel / CSV exports"],
-        ["3 · Strategy Hub", "Any number of AlgoTest files (either column layout) or StockMock basket workbooks, together",
-         "One merged, capital-based trade log and dashboard - equity curve starting at your capital, drawdown %, "
-         "ROI, a monthly/yearly matrix and a combined master trade log, exported as one Excel report"]])
+        ["3 · Strategy Hub", "Any number of files together: AlgoTest (either column layout), StockMock basket workbooks, "
+         "or a previous report this app exported",
+         "One merged, capital-based trade log and dashboard - equity curve starting at your capital, drawdown %, ROI, "
+         "a monthly/yearly matrix, a day-wise table and calendar heatmap, and a combined master trade log, exported "
+         "as one Excel report"]])
 
     + R.h2("B", "The workflow in 6 steps")
     + steps([
@@ -82,7 +84,9 @@ st.html(R.wrap(
         "<b>Rolling windows:</b> choose the holding periods (months) to test.",
         "<b>Download full report (Excel):</b> every section as formatted Excel tables - Report Info (files, filters, capital, "
         "definitions), Summary, Yearly, Monthly heatmap per series, Regime, Rolling, Risk and the full trade ledger. "
-        "Your filters and capital are applied exactly as on screen."])
+        "Your filters and capital are applied exactly as on screen.",
+        "<b>Your upload is remembered</b> for this browser session - navigating to another page (Strategy Hub included) "
+        "and back still shows your Long/Short results, with a Clear button in the sidebar to start over."])
     + "<h3>Report sections</h3>"
     + R.table(["#", "Section", "What it shows"], [
         ["1", "Executive Summary", "Net P&amp;L, win rate, profit factor, max drawdown + a plain-language summary"],
@@ -93,29 +97,39 @@ st.html(R.wrap(
         ["6", "Distribution &amp; Activity", "P&amp;L histogram, trades per month, win / loss split"],
         ["7", "Trade Ledger &amp; Exports", "All / Long / Short / Winning / Losing tables with search and Excel / CSV export"],
         ["8", "Conclusion", "Factual summary and disclaimer"]])
+    + "<p class=\"cap\">Open <b>\"Customize report sections\"</b> above the KPI cards to show or hide individual tables and "
+      "charts (19 of them - e.g. keep the Deep-Dive metrics table but drop its monthly heatmap). Hiding something on screen "
+      "never removes it from the Excel export, which always has everything.</p>"
 
     + R.h2("E", "Page 3 · Strategy Hub - details")
     + ul([
-        "<b>Upload as many files as you like</b>, mixing sources freely: AlgoTest exports (either column layout) and "
-        "StockMock basket workbooks (.xlsx with a 'Basket Strategies' sheet) in the same batch.",
-        "<b>Format is auto-detected</b> per file - you don't choose it. A chip under the uploader shows what each "
-        "file was read as (AlgoTest / StockMock) and its trade count; a file that fails shows a clear reason instead "
-        "of being silently skipped.",
+        "<b>Upload as many files as you like</b>, mixing sources freely in one batch: AlgoTest exports (either column "
+        "layout), StockMock basket workbooks, and reports this app has given you before.",
+        "<b>Format is auto-detected</b> per file - you don't choose it. A chip under the uploader shows what each file "
+        "was read as (AlgoTest / StockMock / Previous report) and its trade count; a file that fails shows a clear "
+        "reason instead of being silently skipped, and the other files still load.",
         "<b>StockMock rows</b> come from each enabled (Run = True) strategy's own result sheet - one row per expiry "
         "cycle. Only the net P/L and exit time are available at that level, so strike, option type, position, entry/exit "
-        "price and duration are left blank there rather than guessed.",
+        "price and duration are left blank there rather than guessed. Verified against a real 9-strategy file: Net "
+        "P&amp;L matched StockMock's own 'Overall Profit' and day-level win/loss count exactly.",
+        "<b>A previous report from this app</b> (Backtest Report or an earlier Strategy Hub export) can be re-uploaded - "
+        "its Trades sheet is read directly, so you can merge an older report back in alongside new files.",
         "<b>Initial Capital</b> is the starting point of the equity curve (it adds each trade's Net P&amp;L on top) "
         "and the denominator for every % figure on this page (ROI, yearly return %, drawdown % of capital). If a "
         "StockMock file carries its own 'Estimated Margin', a checkbox offers to use that figure as capital instead "
         "of typing one in - untick it to go back to the manual value.",
         "<b>Total Charges</b> is spread evenly across every merged trade, since none of the source files carry a "
         "per-trade charge: Net P/L = Gross P/L − (Total Charges ÷ number of trades).",
-        "<b>Day-wise Breakdown</b> sums every trade (across every uploaded file) that exited on each calendar day - "
-        "pick a year and month to see it. This is the same basis StockMock itself uses for its own day-level Win% "
-        "and Max Profit/Loss, so it's the fastest way to check a Hub import against the source report.",
-        "<b>Report sections</b> can each be shown or hidden with the checkboxes above the KPI cards - useful for a "
-        "shorter screen or a specific screenshot. Hiding a section never affects the Excel export, which always "
-        "has everything.",
+        "<b>Day-wise Breakdown</b> sums every trade (across every uploaded file) that exited on each calendar day and "
+        "shows every trading day in one table, newest first - no need to pick a year or month, those are optional "
+        "filters if you want to narrow it down. This is the same basis StockMock itself uses for its own day-level "
+        "Win% and Max Profit/Loss, so it's the fastest way to check a Hub import against the source report. Below the "
+        "table: a <b>Day-wise Monthly Breakdown</b> - a calendar-style table (one row per month, one column per day of "
+        "the month) with every day's ₹ figure shown directly - and a daily Net P&amp;L bar chart with a zoomable range "
+        "slider (drag it, or use the 1m/6m/1y/All buttons) for a long multi-year history.",
+        "<b>Report sections</b> (KPIs, Charts, Monthly/Yearly, Day-wise, Trade log) can each be shown or hidden with "
+        "the checkboxes above the KPI cards - useful for a shorter screen or a specific screenshot. Hiding a section "
+        "never affects the Excel export, which always has everything.",
         "<b>Combined Master Trade Log</b> lists every trade chronologically with a Source column (which file it came "
         "from), searchable and split into All / Winning / Losing / By file tabs; export the full merged set as CSV "
         "or a formatted Excel report.",

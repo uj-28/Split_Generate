@@ -153,12 +153,13 @@ if show_kpi:
 if show_charts:
     st.html(hub.wrap(hub.h2("Combined Cumulative Equity Curve")))
     with st.container(border=True):
-        f = go.Figure(go.Scatter(x=eq["Exit DateTime"], y=eq["Equity"], mode="lines", line=dict(color=hub.ACCENT, width=2.4),
-                                 fill="tozeroy", fillcolor="rgba(76,141,255,.12)"))
-        chart(f, "Combined Cumulative Equity Curve (₹)", 440)
+        f = go.Figure(go.Scatter(x=eq["Exit DateTime"], y=eq["Equity"], mode="lines", line=dict(color=hub.ACCENT, width=2.6, shape="spline", smoothing=0.3),
+                                 fill="tozeroy", fillcolor="rgba(76,141,255,.14)", hovertemplate="%{x|%d %b %Y}<br>₹%{y:,.0f}<extra></extra>"))
+        f.update_xaxes(rangeslider=dict(visible=True, thickness=0.06, bgcolor=hub.PANEL2, bordercolor=hub.BORDER, borderwidth=1))
+        chart(f, "Combined Cumulative Equity Curve (₹)", 460)
     with st.container(border=True):
-        f = go.Figure(go.Scatter(x=eq["Exit DateTime"], y=-eq["Drawdown %"], mode="lines", line=dict(color=hub.NEG, width=1.8),
-                                 fill="tozeroy", fillcolor="rgba(251,91,91,.16)"))
+        f = go.Figure(go.Scatter(x=eq["Exit DateTime"], y=-eq["Drawdown %"], mode="lines", line=dict(color=hub.NEG, width=1.8, shape="spline", smoothing=0.3),
+                                 fill="tozeroy", fillcolor="rgba(251,91,91,.16)", hovertemplate="%{x|%d %b %Y}<br>%{y:.2f}%<extra></extra>"))
         f.update_yaxes(ticksuffix="%")
         chart(f, "Underwater Drawdown Curve (%)", 320)
 
@@ -186,23 +187,67 @@ if show_matrix:
 # ====================== day-wise breakdown ======================
 if show_daily and len(daily):
     st.html(hub.wrap(hub.h2("Day-wise Breakdown")))
+    st.html(hub.wrap('<p class="cap">Every trading day, all together - sums every trade (across every uploaded strategy/file) '
+                     'that exited that day, the same basis StockMock itself uses for its day-level Win% and Max Profit/Loss '
+                     'figures. Use the filters only if you want to narrow it down.</p>'))
     dd = pd.to_datetime(daily["Date"])
+    f1, f2, f3 = st.columns([1, 1, 2])
     years_av = sorted(dd.dt.year.unique(), reverse=True)
-    dc1, dc2 = st.columns(2)
-    dy = dc1.selectbox("Year", years_av, key="hub_day_year")
-    months_av = sorted(dd[dd.dt.year == dy].dt.month.unique())
-    dm = dc2.selectbox("Month", months_av, format_func=lambda n: pd.Timestamp(2000, n, 1).strftime("%B"),
-                       index=len(months_av) - 1, key="hub_day_month")
-    sel = daily[(dd.dt.year == dy) & (dd.dt.month == dm)].copy()
-    sel["Date"] = pd.to_datetime(sel["Date"]).dt.strftime("%a, %d %b")
-    rows = [[r["Date"], (R.inr(r["Net P&L"]), R.sgn(r["Net P&L"])), str(int(r["Trades"])), str(int(r["Wins"])), str(int(r["Losses"]))]
-            for _, r in sel.iterrows()]
-    tot = sel["Net P&L"].sum()
-    rows.append(["Month total", (R.inr(tot), R.sgn(tot)), str(int(sel.Trades.sum())), str(int(sel.Wins.sum())), str(int(sel.Losses.sum()))])
-    st.html(hub.wrap(hub.table(["Day", "Net P&L", "Trades", "Winning", "Losing"], rows)
-                     + f'<p class="cap">{len(sel)} trading day(s) in {pd.Timestamp(2000, dm, 1):%B} {dy}. '
-                       'Each day sums every trade (across every uploaded strategy/file) that exited that day - '
-                       'the same basis StockMock itself uses for its day-level Win% and Max Profit/Loss figures.</p>'))
+    dy = f1.multiselect("Year", years_av, key="hub_day_year")
+    months_av = sorted(dd.dt.month.unique())
+    dm = f2.multiselect("Month", months_av, format_func=lambda n: pd.Timestamp(2000, n, 1).strftime("%B"), key="hub_day_month")
+    dq = f3.text_input("Search", key="hub_day_q", placeholder="e.g. a date, or part of it")
+
+    sel = daily.copy()
+    if dy:
+        sel = sel[dd.dt.year.isin(dy)]
+    if dm:
+        sel = sel[dd.dt.month.isin(dm)]
+
+    # --- new: day-wise monthly heatmap - every calendar day as its own coloured cell ---
+    hdd = pd.to_datetime(sel["Date"])
+    grid = sel.assign(YM=hdd.dt.to_period("M").astype(str), Day=hdd.dt.day).pivot_table(
+        index="YM", columns="Day", values="Net P&L", aggfunc="sum").reindex(columns=range(1, 32)).sort_index()
+    if len(grid):
+        z = grid.values
+        hover = [[f"{ym}-{d:02d}<br>₹{v:,.0f}" if pd.notna(v) else "" for d, v in zip(grid.columns, row)] for ym, row in zip(grid.index, z)]
+        cap = max(abs(pd.Series(z.flatten()).dropna()).max(), 1) if pd.notna(z).any() else 1
+        hm = go.Figure(go.Heatmap(z=z, x=[str(d) for d in grid.columns], y=list(grid.index), text=hover, hoverinfo="text",
+                                  colorscale=[[0, hub.NEG], [0.5, hub.PANEL2], [1, hub.POS]], zmid=0, zmin=-cap, zmax=cap,
+                                  xgap=3, ygap=3, showscale=False))
+        hm.update_xaxes(title="Day of month", dtick=1, side="top")
+        hm.update_yaxes(autorange="reversed")
+        with st.container(border=True):
+            chart(hm, "Day-wise Monthly Breakdown (₹ net P&L per day)", max(280, min(900, 36 * len(grid.index) + 90)))
+        st.html(hub.wrap('<p class="cap">One row per month, one column per calendar day - darker green/red means a bigger win/loss '
+                         'that day. Directly comparable to the ₹ figures in the Monthly &amp; Yearly matrix above, just at day '
+                         'resolution. Hover a cell for the exact date and amount.</p>'))
+
+    # --- daily P&L bar chart, smooth zoom/pan via a range slider ---
+    if len(sel):
+        bar = go.Figure(go.Bar(x=pd.to_datetime(sel["Date"]), y=sel["Net P&L"],
+                               marker_color=[hub.POS if v > 0 else hub.NEG if v < 0 else hub.MUTED2 for v in sel["Net P&L"]],
+                               hovertemplate="%{x|%d %b %Y}<br>₹%{y:,.0f}<extra></extra>"))
+        bar.update_xaxes(rangeslider=dict(visible=True, thickness=0.08, bgcolor=hub.PANEL2, bordercolor=hub.BORDER, borderwidth=1),
+                         rangeselector=dict(
+            buttons=[dict(count=1, label="1m", step="month", stepmode="backward"),
+                    dict(count=6, label="6m", step="month", stepmode="backward"),
+                    dict(count=1, label="1y", step="year", stepmode="backward"), dict(step="all", label="All")],
+            bgcolor=hub.PANEL2, activecolor=hub.ACCENT, font=dict(color=hub.TEXT, size=11)))
+        with st.container(border=True):
+            chart(bar, "Daily Net P&L (₹) - drag the range below to zoom", 380)
+
+    # --- the full day-by-day table, every day at once, no selection required ---
+    disp_daily = sel.sort_values("Date", ascending=False).copy()
+    disp_daily["Date"] = pd.to_datetime(disp_daily["Date"]).dt.strftime("%a, %d %b %Y")
+    disp_daily = disp_daily.rename(columns={"Net P&L": "Net P&L (₹)"})
+    if dq:
+        disp_daily = disp_daily[disp_daily["Date"].str.contains(dq, case=False, regex=False)]
+    st.caption(f"{len(disp_daily):,} trading day(s)" + (f" of {len(daily):,} total" if len(disp_daily) != len(daily) else ""))
+    st.dataframe(disp_daily.style.map(lambda x: f"color:{hub.POS}" if isinstance(x, (int, float)) and x > 0
+                                      else f"color:{hub.NEG}" if isinstance(x, (int, float)) and x < 0 else "",
+                                      subset=["Net P&L (₹)"]).format({"Net P&L (₹)": "{:,.2f}"}),
+                 hide_index=True, height=420, width="stretch")
 
 # ====================== master trade log ======================
 if show_log:

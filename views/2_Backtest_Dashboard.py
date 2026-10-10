@@ -180,12 +180,34 @@ if len(frames) == 2:
         st.warning(f"{len(both)} entry timestamp(s) appear in both files (kept - check they are not duplicates).")
 
 st.html(R.wrap(R.h2("", "Report sections")))
-tg = st.columns(8)
-labels = ["Summary", "Dashboard", "Regime", "Deep-Dive", "Risk & Capital", "Distribution", "Trade Ledger", "Conclusion"]
-show = {lab: tg[i].checkbox(lab, True, key=f"bt_show_{i}") for i, lab in enumerate(labels)}
+SECTION_ITEMS = [
+    ("kpi", "1 · KPI cards & summary"),
+    ("cards", "2 · Strategy cards"),
+    ("dash_table", "2 · Metrics table"),
+    ("equity", "2 · Equity curve chart"),
+    ("dd", "2 · Drawdown chart"),
+    ("regime", "3 · Regime table"),
+    ("dd_table", "4 · Metrics table"),
+    ("dd_heatmap", "4 · Monthly heatmap"),
+    ("dd_yearly", "4 · Yearly table"),
+    ("dd_rolling", "4 · Rolling table"),
+    ("dd_yearlychart", "4 · Yearly chart"),
+    ("dd_rollingchart", "4 · Rolling chart"),
+    ("dd_takeaway", "4 · Takeaway note"),
+    ("risk", "5 · Risk & Capital table"),
+    ("dist_pnl", "6 · P&L distribution chart"),
+    ("dist_activity", "6 · Monthly activity chart"),
+    ("dist_winloss", "6 · Win/loss chart"),
+    ("ledger", "7 · Trade ledger tables"),
+    ("conclusion", "8 · Conclusion"),
+]
+with st.expander("Customize report sections - hide any table or chart you don't need", expanded=False):
+    sel = st.multiselect("Visible", [lab for _, lab in SECTION_ITEMS], default=[lab for _, lab in SECTION_ITEMS],
+                         label_visibility="collapsed")
+show = {key: lab in sel for key, lab in SECTION_ITEMS}
 
 # 1 -------------------------------------------------------------------------------------
-if show["Summary"]:
+if show["kpi"]:
     dd_txt = f' ({R.dt(mc["DD From"])} – {R.dt(mc["DD To"])})' if mc["DD From"] is not None else ""
     summary = (f'Across <b>{mc["Total Trades"]:,}</b> trades ({R.dt(v["Entry DateTime"].min())} – {R.dt(v["Exit DateTime"].max())}) the strategy '
                f'returned <b>{R.inr(mc["Net P&L"])}</b> with a <b>{R.num(mc["Win Rate %"], 2, "%")}</b> win rate and a profit factor of '
@@ -202,21 +224,27 @@ if show["Summary"]:
          + (f' · {CM["Combined"]["Max DD % of Capital"]:.2f}% of capital' if cap else ""), "neg")]) + f"<p>{summary}</p>"))
 
 # 2 -------------------------------------------------------------------------------------
-if show["Dashboard"]:
+if show["cards"] or show["dash_table"] or show["equity"] or show["dd"]:
+    st.html(R.wrap(R.h2(2, "Comparative Performance Dashboard")))
+if show["cards"]:
     cards = [(n, COLORS[n], [("Net P&L", R.inr(M[n]["Net P&L"])), ("Win rate", R.num(M[n]["Win Rate %"], 1, "%")),
                              ("Profit factor", R.num(M[n]["Profit Factor"])), ("Avg / trade", R.inr(M[n]["Avg P&L / Trade"])),
                              ("Max drawdown", R.inr(M[n]["Max Drawdown"])), ("Worst trade", R.inr(M[n]["Largest Loss"]))])
              for n in names]
-    st.html(R.wrap(R.h2(2, "Comparative Performance Dashboard") + R.cards(cards)
-                   + R.table(["Metric"] + names, spec_rows([M[n] for n in names]))
+    st.html(R.wrap(R.cards(cards)))
+if show["dash_table"]:
+    st.html(R.wrap(R.table(["Metric"] + names, spec_rows([M[n] for n in names]))
                    + '<p class="cap">Every figure is computed from that column\'s own trade records - Combined is never an average of Long and Short. '
                      'Win rate = wins ÷ all trades; profit factor = gross profit ÷ |gross loss| (n/a when there is no loss).</p>'))
+if show["equity"] or show["dd"]:
     EQ = {n: core.equity(s) for n, s in SER.items()}
+if show["equity"]:
     fig = go.Figure()
     for n in names:
         fig.add_scatter(x=EQ[n]["Exit DateTime"], y=EQ[n]["Cum P&L"], name=n, mode="lines",
                         line=dict(color=COLORS[n], width=3 if n == "Combined" else 1.7))
     chart(fig, "Cumulative realised P&L (₹) - restarts at 0 on the first filtered trade", 360)
+if show["dd"]:
     fig = go.Figure()
     for n in names:
         fig.add_scatter(x=EQ[n]["Exit DateTime"], y=-EQ[n]["Drawdown"], name=n, mode="lines", fill="tozeroy" if n == "Combined" else None,
@@ -226,7 +254,7 @@ if show["Dashboard"]:
                "Closed-trade basis: no intraday mark-to-market.")
 
 # 3 -------------------------------------------------------------------------------------
-if show["Regime"]:
+if show["regime"]:
     reg = []
     for n in names:
         post = SER[n][SER[n]["Exit DateTime"] >= split]
@@ -245,26 +273,51 @@ if show["Regime"]:
                              + (["ROI"] if cap else []), reg)))
 
 # 4 -------------------------------------------------------------------------------------
-if show["Deep-Dive"]:
+dd_any = any(show[k] for k in ("dd_table", "dd_heatmap", "dd_yearly", "dd_rolling", "dd_yearlychart", "dd_rollingchart", "dd_takeaway"))
+if dd_any:
     st.html(R.wrap(R.h2(4, "Strategy Deep-Dive")))
     for tab, n in zip(st.tabs(names), names):
         with tab:
             s, m = SER[n], M[n]
             mat, yearly = core.monthly_matrix(s)
             roll = core.rolling_returns(s, tuple(roll_m)).astype({"Months": int, "Windows": int})
-            kv = R.table(["Metric", n], spec_rows([m]))
-            yrows = [[str(int(r["Year"])), (R.inr(r["Net P&L"]), R.sgn(r["Net P&L"])), str(int(r["Trades"])),
-                      R.num(r["Win Rate %"], 2, "%"), R.num(r["Profit Factor"]), R.inr(r["Avg P&L / Trade"]),
-                      (R.inr(r["Max Drawdown"]) + R.pct_of(r["Max Drawdown"], cap), "bad"),
-                      (R.num(r["Net P&L"] / cap * 100, 2, "%") if cap else "n/a", "hl")] for _, r in yearly.iterrows()]
+            if show["dd_table"]:
+                st.html(R.wrap(f"<h3>4.{names.index(n) + 1}.1 Performance metrics</h3>" + R.table(["Metric", n], spec_rows([m]))))
+            if show["dd_heatmap"]:
+                st.html(R.wrap("<h3>Monthly net P&amp;L (by exit month)</h3>" + R.heatmap(mat, yearly, m["Max Drawdown"], cap)))
+            if show["dd_yearly"]:
+                yrows = [[str(int(r["Year"])), (R.inr(r["Net P&L"]), R.sgn(r["Net P&L"])), str(int(r["Trades"])),
+                          R.num(r["Win Rate %"], 2, "%"), R.num(r["Profit Factor"]), R.inr(r["Avg P&L / Trade"]),
+                          (R.inr(r["Max Drawdown"]) + R.pct_of(r["Max Drawdown"], cap), "bad"),
+                          (R.num(r["Net P&L"] / cap * 100, 2, "%") if cap else "n/a", "hl")] for _, r in yearly.iterrows()]
+                st.html(R.wrap("<h3>Yearly breakdown</h3>"
+                               + R.table(["Year", "Net P&L", "Trades", "Win rate", "Profit factor", "Avg / trade", "Max DD", "ROI"], yrows)))
             rrows = [[("1 Month" if int(r.Months) == 1 else f"{int(r.Months)} Months" if r.Months < 12 else f"{int(r.Months) // 12} Year" + ("s" if r.Months > 12 else "")),
                       str(int(r.Windows)), (R.inr(r.Worst) + R.pct_of(r.Worst, cap), R.sgn(r.Worst)),
                       (R.inr(r.Median) + R.pct_of(r.Median, cap), R.sgn(r.Median)),
                       (R.inr(r.Average) + R.pct_of(r.Average, cap), R.sgn(r.Average)), (R.inr(r.Best) + R.pct_of(r.Best, cap), "good"),
                       (R.num(r["Positive %"], 1, "%"), "good" if r["Positive %"] == 100 else "hl" if r["Positive %"] >= 90 else "")]
                      for _, r in roll.iterrows()]
-            take = ""
-            if len(roll):
+            if show["dd_rolling"]:
+                st.html(R.wrap("<h3>Rolling return validation</h3><p>Each window is a real calendar period anchored on every trade, "
+                               "counted only where the full period fits inside the data.</p>"
+                               + (R.table(["Holding period", "Windows", "Worst", "Median", "Average", "Best", "Positive"], rrows)
+                                  if rrows else "<p>The sample is shorter than every selected window.</p>")))
+            if show["dd_yearlychart"] or show["dd_rollingchart"]:
+                a, b = st.columns(2)
+                if show["dd_yearlychart"]:
+                    with a:
+                        f = go.Figure(go.Bar(x=yearly["Year"].astype(str), y=yearly["Net P&L"],
+                                             marker_color=[R.POS if x > 0 else R.NEG for x in yearly["Net P&L"]]))
+                        chart(f, "Net P&L by calendar year (₹)", 300)
+                if show["dd_rollingchart"] and len(roll):
+                    with b:
+                        lbl = roll.Months.astype(str) + "m"
+                        f = go.Figure()
+                        for col, c in (("Worst", R.NEG), ("Average", R.NAVY), ("Best", R.POS)):
+                            f.add_bar(x=lbl, y=roll[col], name=col, marker_color=c)
+                        chart(f, "Rolling windows - worst / average / best (₹)", 300)
+            if show["dd_takeaway"] and len(roll):
                 clean = roll[(roll["Positive %"] == 100) & (roll.Windows >= 5)]
                 if len(clean):
                     c = clean.iloc[0]
@@ -274,31 +327,10 @@ if show["Deep-Dive"]:
                     b = roll.loc[roll["Positive %"].idxmax()]
                     take = (f'No holding period tested was uniformly positive; the best is {int(b.Months)}-month at {b["Positive %"]:.1f}% '
                             f'of windows in profit, worst case {R.inr(b.Worst)}.')
-            st.html(R.wrap(f"<h3>4.{names.index(n) + 1}.1 Performance metrics</h3>" + kv
-                           + "<h3>Monthly net P&amp;L (by exit month)</h3>" + R.heatmap(mat, yearly, m["Max Drawdown"], cap)
-                           + "<h3>Yearly breakdown</h3>"
-                           + R.table(["Year", "Net P&L", "Trades", "Win rate", "Profit factor", "Avg / trade", "Max DD", "ROI"], yrows)
-                           + "<h3>Rolling return validation</h3><p>Each window is a real calendar period anchored on every trade, "
-                             "counted only where the full period fits inside the data.</p>"
-                           + (R.table(["Holding period", "Windows", "Worst", "Median", "Average", "Best", "Positive"], rrows)
-                              if rrows else "<p>The sample is shorter than every selected window.</p>")))
-            a, b = st.columns(2)
-            with a:
-                f = go.Figure(go.Bar(x=yearly["Year"].astype(str), y=yearly["Net P&L"],
-                                     marker_color=[R.POS if x > 0 else R.NEG for x in yearly["Net P&L"]]))
-                chart(f, "Net P&L by calendar year (₹)", 300)
-            with b:
-                if len(roll):
-                    lbl = roll.Months.astype(str) + "m"
-                    f = go.Figure()
-                    for col, c in (("Worst", R.NEG), ("Average", R.NAVY), ("Best", R.POS)):
-                        f.add_bar(x=lbl, y=roll[col], name=col, marker_color=c)
-                    chart(f, "Rolling windows - worst / average / best (₹)", 300)
-            if take:
                 st.html(R.wrap(f'<div class="callout"><b>Holding-period takeaway:</b> {take}</div>'))
 
 # 5 -------------------------------------------------------------------------------------
-if show["Risk & Capital"]:
+if show["risk"]:
     risk = [[n, (R.inr(M[n]["Max Drawdown"]) + R.pct_of(M[n]["Max Drawdown"], cap), "bad"), (R.inr(M[n]["Largest Loss"]), "bad"),
              str(M[n]["Max Loss Streak"]), (R.inr(M[n]["Annualised P&L"]), R.sgn(M[n]["Annualised P&L"])), (R.num(M[n]["Return / MDD"]), "hl")]
             + ([(R.num(CM[n]["Annualised ROI %"], 2, "%"), "hl")] if cap else [])
@@ -310,32 +342,36 @@ if show["Risk & Capital"]:
                                      'No capital is assumed.</p>')))
 
 # 6 -------------------------------------------------------------------------------------
-if show["Distribution"]:
+dist_any = show["dist_pnl"] or show["dist_activity"] or show["dist_winloss"]
+if dist_any:
     st.html(R.wrap(R.h2(6, "Trade Distribution & Activity")))
     a, b, c = st.columns([2, 2, 1.4])
-    with a:
-        f = go.Figure()
-        for n in names[1:] or names:
-            f.add_histogram(x=SER[n]["P/L"], name=n, marker_color=COLORS[n], opacity=.8, nbinsx=40)
-        f.update_layout(barmode="overlay")
-        chart(f, "Trade P&L distribution (₹)", 320)
-    with b:
-        act = v.groupby([v["Entry DateTime"].dt.to_period("M").astype(str), "Direction"]).size().unstack(fill_value=0)
-        f = go.Figure()
-        for d in act.columns:
-            f.add_bar(x=act.index, y=act[d], name=d, marker_color=COLORS[d])
-        f.update_layout(barmode="stack")
-        chart(f, "Monthly trade activity (by entry)", 320)
-    with c:
-        f = go.Figure(go.Pie(labels=["Winning", "Losing", "Breakeven"], hole=.55, sort=False,
-                             values=[mc["Winning Trades"], mc["Losing Trades"], mc["Breakeven Trades"]],
-                             marker_colors=[R.POS, R.NEG, "#9AA5B1"]))
-        chart(f, "Win vs loss", 320)
+    if show["dist_pnl"]:
+        with a:
+            f = go.Figure()
+            for n in names[1:] or names:
+                f.add_histogram(x=SER[n]["P/L"], name=n, marker_color=COLORS[n], opacity=.8, nbinsx=40)
+            f.update_layout(barmode="overlay")
+            chart(f, "Trade P&L distribution (₹)", 320)
+    if show["dist_activity"]:
+        with b:
+            act = v.groupby([v["Entry DateTime"].dt.to_period("M").astype(str), "Direction"]).size().unstack(fill_value=0)
+            f = go.Figure()
+            for d in act.columns:
+                f.add_bar(x=act.index, y=act[d], name=d, marker_color=COLORS[d])
+            f.update_layout(barmode="stack")
+            chart(f, "Monthly trade activity (by entry)", 320)
+    if show["dist_winloss"]:
+        with c:
+            f = go.Figure(go.Pie(labels=["Winning", "Losing", "Breakeven"], hole=.55, sort=False,
+                                 values=[mc["Winning Trades"], mc["Losing Trades"], mc["Breakeven Trades"]],
+                                 marker_colors=[R.POS, R.NEG, "#9AA5B1"]))
+            chart(f, "Win vs loss", 320)
 
 # 7 -------------------------------------------------------------------------------------
 lead = ["Trade #", "Direction", "Entry DateTime", "Exit DateTime", "Duration (min)", "P/L"]
 cols = lead + [c for c in v.columns if c not in lead + ["Entry Date", "Entry Time", "Exit Date", "Exit Time"]]
-if show["Trade Ledger"]:
+if show["ledger"]:
     st.html(R.wrap(R.h2(7, "Trade Ledger & Exports")))
     q = st.text_input("Search (any column)")
     tabs = ["All", "Long", "Short", "Winning", "Losing"]
@@ -384,7 +420,7 @@ st.download_button("Download full report (Excel)", report_xlsx, "Backtest Report
 sb.download_button("Download full report (Excel)", report_xlsx, "Backtest Report.xlsx", type="primary", key="xfull_sb")
 
 # 8 -------------------------------------------------------------------------------------
-if show["Conclusion"]:
+if show["conclusion"]:
     st.html(R.wrap(R.h2(8, "Conclusion")
                    + f"<p>The combined book produced {R.inr(mc['Net P&L'])} over {mc['Total Trades']:,} trades at a "
                      f"{R.num(mc['Win Rate %'], 2, '%')} win rate and {R.num(mc['Profit Factor'])} profit factor, with a worst closed-trade "

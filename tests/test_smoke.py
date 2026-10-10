@@ -71,6 +71,8 @@ def test_every_page_renders(page):
     assert not at.exception, [e.value for e in at.exception]
 
 
+
+
 # ---------- Strategy Hub: AlgoTest (detailed columns) + StockMock + multi-file merge ----------
 def algotest_detailed_csv(n=10, start="2024-10-07"):
     """AlgoTest's newer export: hyphenated/condensed headers, one parent + one leg row per trade."""

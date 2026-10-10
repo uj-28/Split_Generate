@@ -234,3 +234,22 @@ def test_excel_sheet_order_and_year_format():
     y = wb["Yearly"]
     yc = [c.value for c in y[4]].index("Year") + 1
     assert y.cell(5, yc).number_format == "0"          # 2024, not 2,024
+
+
+def test_backtest_report_section_toggles_never_crash():
+    """Each of the 19 table/chart toggles (Instructions > Page 2 details) must be independently
+    removable, and clearing all of them must still render - with the Excel export always kept -
+    without an exception. Needs real example files to drive the sidebar's own data loading, so
+    this lives here (skipped like the rest of this file when they're absent), not in test_smoke."""
+    from streamlit.testing.v1 import AppTest
+    root = pathlib.Path(__file__).resolve().parents[1]
+    at = AppTest.from_file(str(root / "views/2_Backtest_Dashboard.py"), default_timeout=60).run()
+    example_cb = next(c for c in at.sidebar.checkbox if "bundled example" in c.label)
+    at = example_cb.set_value(True).run()
+    assert not at.exception
+    ms = at.multiselect[0]
+    assert len(ms.options) == 19
+    at = at.multiselect[0].set_value(ms.options[:-1]).run()  # drop the last item
+    assert not at.exception
+    at = at.multiselect[0].set_value([]).run()  # clear everything
+    assert not at.exception  # the Excel-building code at the bottom of the page still ran fine

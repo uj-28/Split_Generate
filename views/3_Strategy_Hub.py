@@ -210,16 +210,17 @@ if show_daily and len(daily):
     grid = sel.assign(YM=hdd.dt.to_period("M").astype(str), Day=hdd.dt.day).pivot_table(
         index="YM", columns="Day", values="Net P&L", aggfunc="sum").reindex(columns=range(1, 32)).sort_index()
     if len(grid):
-        st.html(hub.wrap(hub.day_table(grid)
+        st.html(hub.wrap(hub.day_table(grid, capital)
                          + '<p class="cap">One row per month, one column per calendar day - every cell shows that day\'s '
-                           'net P&amp;L directly. Directly comparable to the Monthly &amp; Yearly matrix above, just at day resolution.</p>'))
+                           'net P&amp;L directly. Return % is that month\'s total ÷ Initial Capital.'
+                           + ('' if capital else ' Enter a capital above to see it - left at 0, it shows n/a.') + '</p>'))
 
     # --- Day Wise Breakup - year x weekday, matching StockMock's own table of the same name ---
     wk = core.weekday_breakup(sel)
     if len(wk):
-        st.html(hub.wrap(hub.weekday_table(wk)
-                         + '<p class="cap">Net P&amp;L by year and day of the week - the same "Day Wise Breakup" table '
-                           'StockMock itself shows in its own workbook, verified to match it exactly.</p>'))
+        st.html(hub.wrap(hub.weekday_table(wk, capital)
+                         + '<p class="cap">Net P&amp;L by year and day of the week - the ₹ figures match StockMock\'s own '
+                           '"Day Wise Breakup" table exactly; the Total and Return % columns are added here.</p>'))
 
     # --- daily P&L bar chart, smooth zoom/pan via a range slider ---
     if len(sel):

@@ -168,37 +168,53 @@ def heatmap(mat, yearly):
            + body + "</tbody></table>")
 
 
-def day_table(grid):
+def _roi_cell(v, capital):
+    """Return % cell for a row/grand total, or an 'n/a' placeholder when no capital was entered -
+    never a guessed number."""
+    if capital:
+        return f'<td class="hl">{v / capital * 100:.2f}%</td>'
+    return '<td class="mid">n/a</td>'
+
+
+def day_table(grid, capital=None):
     """Year-month x day-of-month table, same visible-value style as heatmap() (text coloured by
     sign, no background fill) - every cell shows its ₹ figure directly, nothing hidden behind a
     hover. `grid`: a pivot with one row per 'YYYY-MM' period, columns 1..31, values = that day's
-    net P&L (NaN = no trades that day)."""
+    net P&L (NaN = no trades that day). `capital` adds a Return % column (Total ÷ capital)."""
     import pandas as pd
     body = ""
     for ym, r in grid.iterrows():
         cells = "".join(f'<td class="{R.sgn(v)}">{R.ind(v)}</td>' if not pd.isna(v) else '<td class="nil">–</td>' for v in r)
         tot = r.sum(min_count=1)
-        body += f'<tr><td class="yr">{ym}</td>{cells}<td class="{R.sgn(tot)}">{"–" if pd.isna(tot) else R.ind(tot)}</td></tr>'
+        body += (f'<tr><td class="yr">{ym}</td>{cells}<td class="{R.sgn(tot)}">{"–" if pd.isna(tot) else R.ind(tot)}</td>'
+                + _roi_cell(tot, capital) + '</tr>')
     colt = grid.sum(min_count=1)
     grand = grid.values[~pd.isna(grid.values)].sum() if grid.size else 0
     tot_cells = "".join(f'<td class="{R.sgn(v)}">{R.ind(v)}</td>' if not pd.isna(v) else '<td class="nil">–</td>' for v in colt)
-    body += f'<tr class="tot"><td class="yr">All</td>{tot_cells}<td class="{R.sgn(grand)}">{R.ind(grand)}</td></tr>'
+    body += (f'<tr class="tot"><td class="yr">All</td>{tot_cells}<td class="{R.sgn(grand)}">{R.ind(grand)}</td>'
+            + _roi_cell(grand, capital) + '</tr>')
     return (f'<div style="overflow-x:auto"><table class="heat" style="min-width:1400px"><thead><tr>'
            f'<th style="text-align:left">Month</th>'
-           + "".join(f"<th>{d}</th>" for d in grid.columns) + '<th>Total</th></tr></thead><tbody>'
+           + "".join(f"<th>{d}</th>" for d in grid.columns) + '<th>Total</th><th>Return</th></tr></thead><tbody>'
            + body + "</tbody></table></div>")
 
 
-def weekday_table(wk):
+def weekday_table(wk, capital=None):
     """Year x weekday (Mon-Fri) table, same visible-value style - matches StockMock's own
-    'Day Wise Breakup' table exactly (same rows/columns/Total row, no hidden hover values)."""
+    'Day Wise Breakup' table (same rows/columns/Total row, no hidden hover values), plus a
+    Total and Return % column (Total ÷ capital) that StockMock's own table doesn't have."""
     import pandas as pd
     body = ""
     for y, r in wk.iterrows():
         cells = "".join(f'<td class="{R.sgn(v)}">{R.ind(v)}</td>' if not pd.isna(v) else '<td class="nil">–</td>' for v in r)
-        body += f'<tr><td class="yr">{y}</td>{cells}</tr>'
+        tot = r.sum(min_count=1)
+        body += (f'<tr><td class="yr">{y}</td>{cells}<td class="{R.sgn(tot)}">{"–" if pd.isna(tot) else R.ind(tot)}</td>'
+                + _roi_cell(tot, capital) + '</tr>')
     tot = wk.sum(min_count=1)
     tot_cells = "".join(f'<td class="{R.sgn(v)}">{R.ind(v)}</td>' if not pd.isna(v) else '<td class="nil">–</td>' for v in tot)
-    body += f'<tr class="tot"><td class="yr">Total</td>{tot_cells}</tr>'
+    grand = wk.values[~pd.isna(wk.values)].sum() if wk.size else 0
+    body += (f'<tr class="tot"><td class="yr">Total</td>{tot_cells}<td class="{R.sgn(grand)}">{R.ind(grand)}</td>'
+            + _roi_cell(grand, capital) + '</tr>')
     return (f'<table class="heat"><thead><tr><th style="text-align:left">Year</th>'
-           + "".join(f"<th>{d}</th>" for d in wk.columns) + "</tr></thead><tbody>" + body + "</tbody></table>")
+           + "".join(f"<th>{d}</th>" for d in wk.columns) + "<th>Total</th><th>Return</th></tr></thead><tbody>"
+           + body + "</tbody></table>")

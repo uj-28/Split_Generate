@@ -14,14 +14,11 @@ CSS = f"""<style>
 /* Strategy Hub: full dark re-skin, scoped to pages with a .sh root so other pages are untouched */
 .sh {{ font-family:"Segoe UI",Inter,Arial,Helvetica,sans-serif; color:{TEXT} }}
 .sh *{{ box-sizing:border-box }}
+/* The sidebar is shared app chrome - it must look identical on every page (report.py's light
+   theme), never recoloured by whichever page happens to be open, so only the main content
+   area (.stApp's background, behind the sidebar) and this page's own widgets go dark. */
 body:has(.sh) .stApp {{ background:{BG} !important }}
 body:has(.sh) [data-testid=stHeader] {{ background:transparent !important }}
-body:has(.sh) [data-testid=stSidebar] {{ background:{PANEL} !important; border-right:1px solid {BORDER} !important }}
-body:has(.sh) [data-testid=stSidebarNavLink] {{ color:{MUTED} !important }}
-body:has(.sh) [data-testid=stSidebarNavLink][aria-current=page] {{ background:rgba(76,141,255,.14) !important; color:{TEXT} !important; border-left-color:{ACCENT} !important }}
-body:has(.sh) [data-testid=stSidebarNavLink] span[data-testid=stIconMaterial] {{ color:{ACCENT} !important }}
-body:has(.sh) [data-testid=stSidebarNav]::before {{ color:{TEXT} !important }}
-body:has(.sh) [data-testid=stSidebarNavItems]::before {{ color:{MUTED2} !important }}
 body:has(.sh) [data-testid=stFileUploader] section {{ background:{PANEL2} !important; border:1.5px dashed rgba(76,141,255,.45) !important }}
 body:has(.sh) [data-testid=stFileUploader] section:hover {{ border-color:{ACCENT} !important; background:#0F1830 !important }}
 body:has(.sh) [data-testid=stFileUploader] small, body:has(.sh) [data-testid=stFileUploaderFileName] {{ color:{MUTED} !important }}

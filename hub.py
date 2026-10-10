@@ -187,3 +187,18 @@ def day_table(grid):
            f'<th style="text-align:left">Month</th>'
            + "".join(f"<th>{d}</th>" for d in grid.columns) + '<th>Total</th></tr></thead><tbody>'
            + body + "</tbody></table></div>")
+
+
+def weekday_table(wk):
+    """Year x weekday (Mon-Fri) table, same visible-value style - matches StockMock's own
+    'Day Wise Breakup' table exactly (same rows/columns/Total row, no hidden hover values)."""
+    import pandas as pd
+    body = ""
+    for y, r in wk.iterrows():
+        cells = "".join(f'<td class="{R.sgn(v)}">{R.ind(v)}</td>' if not pd.isna(v) else '<td class="nil">–</td>' for v in r)
+        body += f'<tr><td class="yr">{y}</td>{cells}</tr>'
+    tot = wk.sum(min_count=1)
+    tot_cells = "".join(f'<td class="{R.sgn(v)}">{R.ind(v)}</td>' if not pd.isna(v) else '<td class="nil">–</td>' for v in tot)
+    body += f'<tr class="tot"><td class="yr">Total</td>{tot_cells}</tr>'
+    return (f'<table class="heat"><thead><tr><th style="text-align:left">Year</th>'
+           + "".join(f"<th>{d}</th>" for d in wk.columns) + "</tr></thead><tbody>" + body + "</tbody></table>")

@@ -681,6 +681,18 @@ def daily_pnl(t):
     return g.rename_axis("Date").reset_index().sort_values("Date").reset_index(drop=True)
 
 
+def weekday_breakup(daily):
+    """Year x weekday (Mon-Fri) net P&L, from daily_pnl()'s output - the same 'Day Wise Breakup'
+    table StockMock itself prints in its own workbook (Basket Strategies sheet). Exit-date basis,
+    matching daily_pnl() and every other day-level figure. Verified against a real file to the
+    rupee, including the Total row."""
+    if daily.empty:
+        return pd.DataFrame(columns=["Mon", "Tue", "Wed", "Thu", "Fri"])
+    d = pd.to_datetime(daily["Date"])
+    g = daily.assign(Y=d.dt.year, W=d.dt.day_name().str[:3]).pivot_table(index="Y", columns="W", values="Net P&L", aggfunc="sum")
+    return g.reindex(columns=["Mon", "Tue", "Wed", "Thu", "Fri"]).rename_axis("Year").sort_index()
+
+
 def is_own_report_workbook(file_bytes):
     """Quick format sniff: is this one of this app's own 'Download full report' exports
     (Backtest Report or Strategy Hub Report), re-uploaded?"""

@@ -283,3 +283,27 @@ def test_stockmock_margin_and_daily_pnl_match_stockmocks_own_figures():
     dp = core.daily_pnl(t)
     assert dp["Trades"].sum() == len(t) and dp["Net P&L"].sum() == pytest.approx(t["P/L"].sum())
     assert (dp["Wins"] + dp["Losses"] <= dp["Trades"]).all()
+
+
+def test_weekday_breakup_matches_stockmocks_own_day_wise_table():
+    """core.weekday_breakup() must reproduce StockMock's own 'Day Wise Breakup' table (Basket
+    Strategies sheet): Year rows x Mon-Fri columns, a Total row, exit-date basis. Checked here
+    with known dates (2024-01-01 is a Monday); the real-file exact match (to the rupee, against
+    a live 9-strategy StockMock workbook) was verified manually during development."""
+    rows = []
+    for i, (date, pnl) in enumerate([("2024-01-01", 100.0),   # Monday
+                                     ("2024-01-02", -40.0),   # Tuesday
+                                     ("2024-01-08", 60.0),    # Monday (next week)
+                                     ("2025-01-06", 10.0)]):  # Monday, next year
+        e = pd.Timestamp(date) + pd.Timedelta(hours=10)
+        rows.append({"Index": str(i), "Entry DateTime": e, "Exit DateTime": e + pd.Timedelta(hours=2),
+                    "P/L": pnl, "Duration (min)": 120})
+    t = pd.DataFrame(rows)
+    daily = core.daily_pnl(t)
+    wk = core.weekday_breakup(daily)
+    assert list(wk.columns) == ["Mon", "Tue", "Wed", "Thu", "Fri"]
+    assert wk.loc[2024, "Mon"] == pytest.approx(160.0)   # 100 + 60, two different Mondays summed
+    assert wk.loc[2024, "Tue"] == pytest.approx(-40.0)
+    assert pd.isna(wk.loc[2024, "Wed"])
+    assert wk.loc[2025, "Mon"] == pytest.approx(10.0)
+    assert core.weekday_breakup(core.daily_pnl(t.iloc[0:0])).empty

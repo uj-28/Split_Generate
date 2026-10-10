@@ -214,6 +214,13 @@ if show_daily and len(daily):
                          + '<p class="cap">One row per month, one column per calendar day - every cell shows that day\'s '
                            'net P&amp;L directly. Directly comparable to the Monthly &amp; Yearly matrix above, just at day resolution.</p>'))
 
+    # --- Day Wise Breakup - year x weekday, matching StockMock's own table of the same name ---
+    wk = core.weekday_breakup(sel)
+    if len(wk):
+        st.html(hub.wrap(hub.weekday_table(wk)
+                         + '<p class="cap">Net P&amp;L by year and day of the week - the same "Day Wise Breakup" table '
+                           'StockMock itself shows in its own workbook, verified to match it exactly.</p>'))
+
     # --- daily P&L bar chart, smooth zoom/pan via a range slider ---
     if len(sel):
         bar = go.Figure(go.Bar(x=pd.to_datetime(sel["Date"]), y=sel["Net P&L"],

@@ -691,10 +691,7 @@ def load_own_report(file_bytes, name):
     return t, rejected.reset_index(drop=True), warnings
 
 
-def detect_and_load(file_bytes, name):
-    """Auto-detect an uploaded file as a StockMock basket workbook, one of this app's own
-    exported reports, or an AlgoTest export (either column layout) and parse it.
-    Returns (trades, rejected, warnings, kind)."""
+def _detect_and_load(file_bytes, name):
     ext = name.lower().rsplit(".", 1)[-1] if "." in name else ""
     if ext == "xlsx" and is_own_report_workbook(file_bytes):
         t, rej, warn = load_own_report(file_bytes, name)
@@ -705,6 +702,20 @@ def detect_and_load(file_bytes, name):
     df = read_table(io.BytesIO(file_bytes), name)
     t, rej, warn = load_algotest(df, name)
     return t, rej, warn, "AlgoTest"
+
+
+def detect_and_load(file_bytes, name):
+    """Auto-detect an uploaded file as a StockMock basket workbook, one of this app's own
+    exported reports, or an AlgoTest export (either column layout) and parse it.
+    Returns (trades, rejected, warnings, kind). One bad/unexpected file must never crash the
+    whole page, so any failure - expected (ValueError) or not - surfaces as a ValueError with
+    the real cause named, instead of propagating a raw exception out of this function."""
+    try:
+        return _detect_and_load(file_bytes, name)
+    except ValueError:
+        raise
+    except Exception as e:
+        raise ValueError(f"'{name}' could not be processed - unexpected {type(e).__name__}: {e}") from e
 
 
 def hub_merge(frames, capital, charges):

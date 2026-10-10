@@ -63,12 +63,12 @@ if up:
     for f in up:
         try:
             t, rej, warn, kind = core.detect_and_load(f.getvalue(), f.name)
-        except ValueError as e:
+            t = t.rename(columns={"Direction": "Source"})
+            t["Source"] = f.name
+        except Exception as e:  # one bad file must never take down the whole page
             chips.append(hub.chip(f.name, "", 0, err=True))
             errors.append(f"{f.name}: {e}")
             continue
-        t = t.rename(columns={"Direction": "Source"})
-        t["Source"] = f.name
         frames.append(t)
         chips.append(hub.chip(f.name, kind, len(t)))
         if len(rej):

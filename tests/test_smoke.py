@@ -224,3 +224,18 @@ def test_hub_merge_with_reimported_report_does_not_duplicate_trade_number():
     assert len(m) == 10
     assert m["Trade #"].tolist() == list(range(1, 11))
     assert not m["Trade #"].duplicated().any()
+
+
+def test_hub_detect_and_load_never_leaks_a_raw_exception(monkeypatch):
+    """Regression: Streamlit Cloud reported an uncaught AttributeError from inside
+    detect_and_load(), which crashed the whole page instead of being shown as a per-file
+    error. Whatever goes wrong inside parsing, callers must only ever see a ValueError."""
+    def boom(*a, **k):
+        raise AttributeError("something unexpected")
+    monkeypatch.setattr(core, "load_stockmock", boom)
+    with pytest.raises(ValueError, match="unexpected AttributeError"):
+        core.detect_and_load(stockmock_workbook(), "basket.xlsx")
+
+    monkeypatch.setattr(core, "load_algotest", boom)
+    with pytest.raises(ValueError, match="unexpected AttributeError"):
+        core.detect_and_load(algotest_detailed_csv(2).to_csv(index=False).encode("utf-8-sig"), "a.csv")
